@@ -9,3 +9,4 @@ v0.0.0
 
 - Add required phrase dataset extraction.
 - Add composite rule required phrase updates.
+- Add required phrase model training and ONNX export.

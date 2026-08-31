@@ -10,6 +10,7 @@ license rules.
 
    dataset
    composite_rules
+   training
    contribute/contrib_doc
 
 Indices and tables

@@ -7,6 +7,29 @@
 
 jobs:
 
+    - job: ubuntu24_ml_tests
+      pool:
+          vmImage: ubuntu-24.04
+      steps:
+          - checkout: self
+            fetchDepth: 10
+          - task: UsePythonVersion@0
+            inputs:
+                versionSpec: '3.12'
+                architecture: x64
+            displayName: Install Python 3.12
+          - script: |
+                ./configure --clean
+                ./configure --dev
+                venv/bin/pip install -e ".[training]"
+            displayName: Configure training test environment
+          - script: |
+                USE_TF=0 venv/bin/pytest -q \
+                    tests/test_training.py \
+                    tests/test_model.py \
+                    tests/test_export.py
+            displayName: Run training unit tests
+
     - template: etc/ci/azure-posix.yml
       parameters:
           job_name: run_code_checks

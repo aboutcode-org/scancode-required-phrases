@@ -12,6 +12,7 @@ include *.rst
 include *.png
 include setup.*
 include configure*
+include conftest.py
 include requirements*
 include .dockerignore
 include .gitignore

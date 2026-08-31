@@ -35,6 +35,20 @@ The command uses existing required phrases from single-key rules to update
 composite rules. A rule is updated only when every relevant license key has a
 non-overlapping match. It operates on the installed ScanCode rules directory.
 
+Train and export a model
+========================
+
+Install the optional training dependencies and train from a generated dataset:
+
+.. code-block:: console
+
+    python -m pip install ".[training,training-8bit]"
+    train-required-phrase-model --data-dir dataset-output --output-dir model-output \
+        --optimizer adamw-8bit
+
+Test-set evaluation is opt-in and should only be used for a final selected run.
+See ``docs/source/training.rst`` for training and ONNX export details.
+
 Development
 ===========
 

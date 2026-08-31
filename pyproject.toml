@@ -103,7 +103,7 @@ force-single-line = true
 lines-after-imports = 1
 default-section = "first-party"
 known-first-party = ["scancode_required_phrases", "tests", "etc/scripts/**/*.py"]
-known-third-party = ["click", "pytest"]
+known-third-party = ["click", "numpy", "pytest", "safetensors", "torch", "torchcrf", "transformers"]
 
 sections = { django = ["django"] }
 section-order = [

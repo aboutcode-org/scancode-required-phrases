@@ -1,13 +1,9 @@
 ScanCode Required Phrases
 =========================
 
-``scancode-required-phrases`` provides tools for working with required phrases
-in ScanCode license rules.
-
-The first available command builds a BIOES training dataset from required
-phrases already marked with ``{{ }}`` in ScanCode ``.RULE`` files. ScanCode
-Toolkit provides the rule models, tokenization, and validation used by the
-command.
+``scancode-required-phrases`` provides commands for working with required
+phrases in ScanCode license rules. ScanCode Toolkit provides the rule models,
+tokenization, matching, and validation used by these commands.
 
 Installation
 ============
@@ -28,6 +24,17 @@ Build a dataset
 The command writes ``train.jsonl``, ``val.jsonl``, and ``test.jsonl``. If
 ``--rules-dir`` is omitted, the installed ScanCode rules directory is used.
 
+Update composite rules
+======================
+
+.. code-block:: console
+
+    add-composite-required-phrases --dry-run --verbose
+
+The command uses existing required phrases from single-key rules to update
+composite rules. A rule is updated only when every relevant license key has a
+non-overlapping match. It operates on the installed ScanCode rules directory.
+
 Development
 ===========
 
@@ -40,4 +47,5 @@ Create a development environment and run the tests:
 
 On POSIX systems, run ``./configure --dev`` and ``venv/bin/pytest``.
 
-See ``docs/source/dataset.rst`` for dataset details.
+See ``docs/source/dataset.rst`` and ``docs/source/composite_rules.rst`` for
+details.

@@ -1,3 +1,4 @@
 The following organizations or individuals have contributed to this repo:
 
--
+- AboutCode.org contributors
+- Kaushik Kumar

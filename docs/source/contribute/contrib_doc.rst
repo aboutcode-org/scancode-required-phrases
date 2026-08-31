@@ -10,9 +10,9 @@ Setup Local Build
 
 To get started, check out and configure the repository for development::
 
-    git clone https://github.com/aboutcode-org/<your-repo>.git
+    git clone https://github.com/aboutcode-org/scancode-required-phrases.git
 
-    cd your-repo
+    cd scancode-required-phrases
     ./configure --dev
 
 (Or use "make dev")
@@ -55,7 +55,7 @@ documentation standards are enforced. We checks for these aspects of the documen
 You myst run these scripts locally before creating a pull request::
 
     make doc8
-    make check-docs
+    make docs-check
 
 
 .. _doc_style_docs8:

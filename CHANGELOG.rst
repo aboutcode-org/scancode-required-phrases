@@ -5,4 +5,6 @@ Changelog
 v0.0.0
 ------
 
-*xxxx-xx-xx* -- Initial release.
+*Unreleased*
+
+- Add required phrase dataset extraction.

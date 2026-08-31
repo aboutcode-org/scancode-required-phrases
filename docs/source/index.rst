@@ -1,11 +1,13 @@
-Welcome to nexb-skeleton's documentation!
-=========================================
+ScanCode Required Phrases
+=========================
+
+Tools for building training datasets from required phrases in ScanCode license rules.
 
 .. toctree::
    :maxdepth: 2
    :caption: Contents:
 
-   skeleton-usage
+   dataset
    contribute/contrib_doc
 
 Indices and tables

@@ -17,7 +17,7 @@
 
 # -- Project information -----------------------------------------------------
 
-project = "nexb-skeleton"
+project = "ScanCode Required Phrases"
 copyright = "nexB Inc., AboutCode and others."
 author = "AboutCode.org authors and contributors"
 
@@ -79,9 +79,9 @@ master_doc = "index"
 
 html_context = {
     "display_github": True,
-    "github_user": "nexB",
-    "github_repo": "nexb-skeleton",
-    "github_version": "develop",  # branch
+    "github_user": "aboutcode-org",
+    "github_repo": "scancode-required-phrases",
+    "github_version": "main",  # branch
     "conf_py_path": "/docs/source/",  # path in the checkout to the docs root
 }
 

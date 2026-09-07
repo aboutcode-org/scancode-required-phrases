@@ -62,6 +62,23 @@ ISR retains its existing name but measures predicted-phrase locatability only.
 It does not exercise injection gates or rule mutation and is not evidence of
 injection success.
 
+Read-only prediction
+--------------------
+
+``RequiredPhrasePredictor`` loads only a final model that passes the publication
+checks. Its ``predict()`` method uses the same ScanCode tokenization as the
+training dataset and returns phrase text, word offsets, confidence, and whether
+the input was truncated. It does not change rules or write files.
+
+.. code-block:: python
+
+    from scancode_required_phrases.inference import RequiredPhrasePredictor
+
+    predictor = RequiredPhrasePredictor.from_model_dir("model-output/final-model")
+    result = predictor.predict("Permission is hereby granted ...")
+
+Treat every prediction as a candidate requiring human review.
+
 Export
 ------
 

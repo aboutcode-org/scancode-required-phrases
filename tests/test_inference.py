@@ -1,8 +1,18 @@
 # Copyright (c) nexB Inc. and others. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import torch
+import json
+import os
 
+import pytest
+
+os.environ.setdefault("USE_TF", "0")
+
+torch = pytest.importorskip("torch")
+pytest.importorskip("torchcrf")
+pytest.importorskip("transformers")
+
+from scancode_required_phrases import inference
 from scancode_required_phrases.inference import RequiredPhrasePredictor
 from scancode_required_phrases.inference import words_from_text
 from scancode_required_phrases.model import ConstrainedCRF
@@ -53,6 +63,26 @@ class StubTagger(torch.nn.Module):
 def test_words_match_dataset_tokenization():
     assert words_from_text("Apache-2.0 License") == ["Apache", "2", "0", "License"]
     assert words_from_text("a\ufb01x\r\nnotice") == ["afix", "notice"]
+
+
+def test_loads_predictor_from_validated_model(tmp_path, monkeypatch):
+    model = StubTagger({})
+    tokenizer = FakeTokenizer()
+    (tmp_path / "train_config.json").write_text(
+        json.dumps({"max_length": 384}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        inference,
+        "load_final_model",
+        lambda model_dir: (model, tokenizer),
+    )
+
+    predictor = RequiredPhrasePredictor.from_model_dir(tmp_path)
+
+    assert predictor.model is model
+    assert predictor.tokenizer is tokenizer
+    assert predictor.max_length == 384
 
 
 def test_predicts_bioes_phrase_without_mutation():

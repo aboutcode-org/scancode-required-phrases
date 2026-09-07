@@ -72,6 +72,20 @@ changing a ScanCode rule or file:
 
 Predictions require human review before they are added to license rules.
 
+Add predicted phrases to rules
+==============================
+
+Review predictions before modifying rules. Then run the integration command on
+a final model directory or Hugging Face repository:
+
+.. code-block:: console
+
+    add-model-required-phrases --model model-output/final-model --dry-run --verbose
+
+The command validates each candidate with ScanCode's required-phrase helpers and
+writes each changed rule once. Rebuild the ScanCode license index after applying
+changes without ``--dry-run``.
+
 Development
 ===========
 

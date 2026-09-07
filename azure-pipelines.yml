@@ -27,7 +27,8 @@ jobs:
                 USE_TF=0 venv/bin/pytest -q \
                     tests/test_training.py \
                     tests/test_model.py \
-                    tests/test_export.py
+                    tests/test_export.py \
+                    tests/test_inference.py
             displayName: Run training unit tests
 
     - template: etc/ci/azure-posix.yml

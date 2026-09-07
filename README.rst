@@ -57,6 +57,21 @@ Test-set evaluation is opt-in and should only be used for a final selected run.
 The completed model is written to ``model-output/final-model`` only after local
 reload and validation succeed. See ``docs/source/training.rst`` for details.
 
+Run read-only prediction
+========================
+
+Load a validated final model and return candidate required phrases without
+changing a ScanCode rule or file:
+
+.. code-block:: python
+
+    from scancode_required_phrases.inference import RequiredPhrasePredictor
+
+    predictor = RequiredPhrasePredictor.from_model_dir("model-output/final-model")
+    result = predictor.predict("Permission is hereby granted ...")
+
+Predictions require human review before they are added to license rules.
+
 Development
 ===========
 

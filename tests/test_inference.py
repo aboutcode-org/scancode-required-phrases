@@ -13,6 +13,7 @@ pytest.importorskip("torchcrf")
 pytest.importorskip("transformers")
 
 from scancode_required_phrases import inference
+from scancode_required_phrases.inference import encode_words
 from scancode_required_phrases.inference import RequiredPhrasePredictor
 from scancode_required_phrases.inference import words_from_text
 from scancode_required_phrases.model import ConstrainedCRF
@@ -35,9 +36,17 @@ class FakeEncoding(dict):
 
 class FakeTokenizer:
 
-    def __call__(self, words, max_length=512, **kwargs):
-        word_ids = [None] + list(range(len(words))) + [None]
-        return FakeEncoding(word_ids[:max_length])
+    def __init__(self, subwords=None):
+        self.subwords = subwords or {}
+
+    def __call__(self, words, truncation, max_length=None, **kwargs):
+        word_ids = [None]
+        for index, word in enumerate(words):
+            word_ids.extend([index] * self.subwords.get(word, 1))
+        word_ids.append(None)
+        if truncation and len(word_ids) > max_length:
+            word_ids = word_ids[: max_length - 1] + [None]
+        return FakeEncoding(word_ids)
 
 
 class StubTagger(torch.nn.Module):
@@ -85,6 +94,14 @@ def test_loads_predictor_from_validated_model(tmp_path, monkeypatch):
     assert predictor.max_length == 384
 
 
+def test_encode_words_removes_a_partially_truncated_word():
+    tokenizer = FakeTokenizer({"many": 3})
+    encoding, truncated = encode_words(tokenizer, ["one", "many", "three"], 4)
+
+    assert encoding.word_ids() == [None, 0, None]
+    assert truncated
+
+
 def test_predicts_bioes_phrase_without_mutation():
     text = "Granted under the MIT License to everyone"
     predictor = RequiredPhrasePredictor(
@@ -115,9 +132,9 @@ def test_predicts_single_word_phrase():
     assert [phrase.text for phrase in result.phrases] == ["MIT"]
 
 
-def test_drops_phrase_cut_by_truncation():
+def test_keeps_valid_phrase_at_truncation_boundary():
     predictor = RequiredPhrasePredictor(
-        model=StubTagger({2: "B-REQ", 3: "I-REQ"}),
+        model=StubTagger({2: "S-REQ"}),
         tokenizer=FakeTokenizer(),
         max_length=5,
     )
@@ -125,7 +142,7 @@ def test_drops_phrase_cut_by_truncation():
     result = predictor.predict("one two three four five six")
 
     assert result.truncated
-    assert result.phrases == ()
+    assert [phrase.text for phrase in result.phrases] == ["three"]
 
 
 def test_empty_text_does_not_run_model():

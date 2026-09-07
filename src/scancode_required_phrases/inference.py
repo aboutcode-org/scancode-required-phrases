@@ -41,6 +41,41 @@ def words_from_text(text):
     return required_phrase_splitter(unicodedata.normalize("NFKC", text))
 
 
+def _word_counts(word_ids):
+    counts = {}
+    for word_id in word_ids:
+        if word_id is not None:
+            counts[word_id] = counts.get(word_id, 0) + 1
+    return counts
+
+
+def encode_words(tokenizer, words, max_length):
+    """Encode the longest complete-word prefix and report truncation."""
+    call = dict(
+        is_split_into_words=True,
+        add_special_tokens=True,
+        return_tensors="pt",
+    )
+    full = tokenizer(words, truncation=False, **call)
+    encoding = tokenizer(words, truncation=True, max_length=max_length, **call)
+
+    full_counts = _word_counts(full.word_ids())
+    retained_counts = _word_counts(encoding.word_ids())
+    covered_words = max(retained_counts, default=-1) + 1
+    complete_words = covered_words
+
+    if covered_words and retained_counts[covered_words - 1] != full_counts[covered_words - 1]:
+        complete_words -= 1
+        encoding = tokenizer(words[:complete_words], truncation=False, **call)
+
+    if not complete_words:
+        raise ValueError("Tokenizer retained no complete words")
+    if encoding["input_ids"].shape[1] > max_length:
+        raise ValueError("Complete-word encoding exceeds the model maximum length")
+
+    return encoding, complete_words < len(words)
+
+
 def span_confidence(crf, word_emissions, tags, mask, free, span):
     """Return the CRF probability mass agreeing with one decoded span."""
     start, end = span
@@ -82,12 +117,10 @@ class RequiredPhrasePredictor:
         if not words:
             return PredictionResult(words=(), phrases=(), truncated=False)
 
-        encoding = self.tokenizer(
-            words,
-            is_split_into_words=True,
-            truncation=True,
+        encoding, truncated = encode_words(
+            tokenizer=self.tokenizer,
+            words=words,
             max_length=self.max_length,
-            return_tensors="pt",
         )
         positions = first_subword_positions(encoding.word_ids())
         if not positions:
@@ -110,11 +143,8 @@ class RequiredPhrasePredictor:
             free = self.model.crf(word_emissions, tags, mask=mask, reduction="none")
 
             labels = [ID2LABEL[int(label)] for label in decoded]
-            truncated = len(labels) < len(words)
             predictions = []
             for start, end in extract_spans(labels):
-                if truncated and end == len(labels) - 1:
-                    continue
                 predictions.append(
                     PhrasePrediction(
                         text=" ".join(words[start : end + 1]),

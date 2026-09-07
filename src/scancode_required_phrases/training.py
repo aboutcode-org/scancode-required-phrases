@@ -1125,7 +1125,7 @@ def validate_state_structure(expected, actual, expected_name="expected", actual_
             f"missing={missing}, unexpected={unexpected}"
         )
     for name in expected_keys:
-        left = expected[name].detach().cpu()
+        left = expected[name].detach()
         right = actual[name].detach().cpu()
         if left.shape != right.shape:
             raise ValueError(
@@ -1133,7 +1133,9 @@ def validate_state_structure(expected, actual, expected_name="expected", actual_
             )
         if left.dtype != right.dtype:
             raise ValueError(f"Tensor {name!r} dtype mismatch: {left.dtype} != {right.dtype}")
-        if not torch.isfinite(left).all() or not torch.isfinite(right).all():
+        if left.device.type != "meta" and not torch.isfinite(left.cpu()).all():
+            raise ValueError(f"Tensor {name!r} contains non-finite values")
+        if not torch.isfinite(right).all():
             raise ValueError(f"Tensor {name!r} contains non-finite values")
 
 
@@ -1248,7 +1250,11 @@ def _load_local_model(model_dir, offline=True):
     except (OSError, json.JSONDecodeError) as error:
         raise ValueError(f"Cannot read supported artifact configuration: {error}") from error
     local_config = AutoConfig.from_pretrained(str(model_dir), local_files_only=True)
-    backbone = AutoModel.from_config(local_config)
+    # Construct the large backbone without allocating random parameters. The
+    # saved tensors are assigned below, avoiding a second full FP32 model during
+    # inference startup on memory-constrained hosts.
+    with torch.device("meta"):
+        backbone = AutoModel.from_config(local_config)
     tagger_config = SimpleNamespace(**values)
     model = PhraseTagger(tagger_config, backbone=backbone)
     state_path = model_dir / "model.safetensors"
@@ -1261,7 +1267,22 @@ def _load_local_model(model_dir, offline=True):
         "constructed",
         "saved",
     )
-    model.load_state_dict(state, strict=True)
+    model.load_state_dict(state, strict=True, assign=True)
+    for module in model.modules():
+        position_ids = getattr(module, "position_ids", None)
+        if position_ids is not None and position_ids.device.type == "meta":
+            module.register_buffer(
+                "position_ids",
+                torch.arange(position_ids.shape[-1]).expand(position_ids.shape),
+                persistent=False,
+            )
+    meta_tensors = [
+        name
+        for name, tensor in (*model.named_parameters(), *model.named_buffers())
+        if tensor.device.type == "meta"
+    ]
+    if meta_tensors:
+        raise ValueError(f"Final_Model did not materialize tensors: {meta_tensors}")
     validate_state_dicts(
         _canonical_state_dict(state),
         _canonical_state_dict(model.state_dict()),

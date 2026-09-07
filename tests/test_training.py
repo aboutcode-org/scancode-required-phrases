@@ -907,9 +907,19 @@ def test_local_loader_loads_saved_values_after_structural_validation(
         str(model_dir / "model.safetensors"),
     )
 
+    class LocalBackbone(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.register_buffer(
+                "position_ids",
+                torch.arange(4).expand((1, 4)),
+                persistent=False,
+            )
+
     class LocalTagger(torch.nn.Module):
         def __init__(self, config, backbone=None):
             super().__init__()
+            self.backbone = backbone
             self.weight = torch.nn.Parameter(torch.tensor([0.0]))
 
     class LocalTokenizer:
@@ -924,7 +934,7 @@ def test_local_loader_loads_saved_values_after_structural_validation(
     monkeypatch.setattr(
         transformers.AutoModel,
         "from_config",
-        lambda config: object(),
+        lambda config: LocalBackbone(),
     )
     monkeypatch.setattr(
         transformers.AutoTokenizer,
@@ -935,6 +945,7 @@ def test_local_loader_loads_saved_values_after_structural_validation(
     loaded, tokenizer = training._load_local_model(model_dir)
 
     assert loaded.weight.item() == 3.0
+    assert loaded.backbone.position_ids.device.type == "cpu"
     assert tokenizer.is_fast
 
 

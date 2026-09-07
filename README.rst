@@ -44,10 +44,12 @@ Install the optional training dependencies and train from a generated dataset:
 
     python -m pip install ".[training,training-8bit]"
     train-required-phrase-model --data-dir dataset-output --output-dir model-output \
+        --model-revision 64a8c8eab3e352a784c658aef62be1662607476f \
         --optimizer adamw-8bit
 
 Test-set evaluation is opt-in and should only be used for a final selected run.
-See ``docs/source/training.rst`` for training and ONNX export details.
+The completed model is written to ``model-output/final-model`` only after local
+reload and validation succeed. See ``docs/source/training.rst`` for details.
 
 Development
 ===========

@@ -18,6 +18,7 @@ from scancode_required_phrases.inference import PredictionResult
 from scancode_required_phrases.model_rules import add_model_required_phrases
 from scancode_required_phrases.model_rules import add_predicted_phrases
 from scancode_required_phrases.model_rules import new_counts
+from scancode_required_phrases.model_rules import prepare_predicted_phrases
 from scancode_required_phrases.model_rules import select_rules
 from scancode_required_phrases.model_rules import update_rules_from_predictions
 
@@ -90,6 +91,25 @@ def test_select_rules_reports_an_unknown_expression(monkeypatch):
     monkeypatch.setattr(model_rules, "get_updatable_rules_by_expression", get_rules)
     with pytest.raises(click.ClickException, match="No rules"):
         select_rules("unknown")
+
+
+def test_prepare_predicted_phrases_returns_updated_copy():
+    rule = make_rule(TEXT, source="mit_1.RULE")
+    counts = new_counts()
+
+    updated_rule = prepare_predicted_phrases(
+        rule=rule,
+        phrases=["MIT License", "do things"],
+        counts=counts,
+    )
+
+    assert updated_rule.text == (
+        "Permission is granted under the {{MIT License}} to {{do things}} with this"
+    )
+    assert updated_rule.source == "mit_1.RULE ml_model"
+    assert counts["injected"] == 2
+    assert rule.text == TEXT
+    assert rule.source == "mit_1.RULE"
 
 
 def test_add_predicted_phrases_dry_run_does_not_mutate_rule():
@@ -206,6 +226,28 @@ def test_add_predicted_phrases_writes_exact_rule_once(tmp_path, monkeypatch):
     assert rule.source == saved.source
 
 
+def test_add_predicted_phrases_keeps_existing_file_when_atomic_replace_fails(
+    tmp_path,
+    monkeypatch,
+):
+    rule = make_rule(TEXT)
+    rule.dump(str(tmp_path))
+    rule_path = tmp_path / rule.identifier
+    before = rule_path.read_bytes()
+    monkeypatch.setattr(model_rules, "rules_data_dir", str(tmp_path))
+    monkeypatch.setattr(
+        model_rules.os,
+        "replace",
+        lambda *args: (_ for _ in ()).throw(OSError("simulated replace failure")),
+    )
+
+    with pytest.raises(OSError, match="simulated replace failure"):
+        add_predicted_phrases(rule, ["MIT License"], new_counts())
+
+    assert rule_path.read_bytes() == before
+    assert rule.text == TEXT
+
+
 def test_update_rules_from_predictions_processes_selected_rules():
     rule = make_rule(TEXT)
 
@@ -318,9 +360,18 @@ def test_load_predictor_requires_a_remote_revision():
         model_rules.load_predictor("owner/model")
 
 
-def test_remote_artifact_names_reject_unsafe_paths():
+@pytest.mark.parametrize(
+    "name",
+    [
+        "../model.safetensors",
+        "models/../model.safetensors",
+        r"..\model.safetensors",
+        r"C:\model.safetensors",
+    ],
+)
+def test_remote_artifact_names_reject_unsafe_paths(name):
     with pytest.raises(ValueError, match="unsafe artifact path"):
-        model_rules._artifact_names({"files": {"../model.safetensors": "digest"}})
+        model_rules._artifact_names({"files": {name: "digest"}})
 
 
 def test_load_predictor_stages_only_declared_remote_artifacts(tmp_path, monkeypatch):

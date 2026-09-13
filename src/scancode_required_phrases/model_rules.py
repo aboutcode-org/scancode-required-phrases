@@ -39,10 +39,15 @@ def _artifact_names(success_marker):
 
     names = ["SUCCESS.json", *files]
     for name in names:
-        if type(name) is not str or not name:
+        if type(name) is not str or not name or "\\" in name:
             raise ValueError(f"Remote model contains an unsafe artifact path: {name!r}")
         path = PurePosixPath(name)
-        if path.is_absolute() or ".." in path.parts:
+        if (
+            not path.parts
+            or path.is_absolute()
+            or ".." in path.parts
+            or path.as_posix() != name
+        ):
             raise ValueError(f"Remote model contains an unsafe artifact path: {name!r}")
     return names
 
@@ -147,8 +152,8 @@ def candidate_issue(rule, phrase):
         return "ambiguous"
 
 
-def add_predicted_phrases(rule, phrases, counts, dry_run=False, verbose=False):
-    """Validate a complete rule update and write the rule at most once."""
+def prepare_predicted_phrases(rule, phrases, counts, verbose=False):
+    """Return a completely validated updated rule, or None."""
     accepted_phrases = []
     for phrase in phrases:
         issue = candidate_issue(rule, phrase)
@@ -158,7 +163,7 @@ def add_predicted_phrases(rule, phrases, counts, dry_run=False, verbose=False):
         accepted_phrases.append(phrase)
 
     if not accepted_phrases:
-        return False
+        return
 
     accepted_phrases.sort(key=lambda phrase: (-len(phrase), phrase))
     updated_rule = copy(rule)
@@ -172,16 +177,44 @@ def add_predicted_phrases(rule, phrases, counts, dry_run=False, verbose=False):
             dry_run=True,
         ):
             counts["conflicts"] += 1
-            return False
+            return
 
     if updated_rule.text == rule.text:
-        return False
+        return
 
     counts["injected"] += len(accepted_phrases)
+    return updated_rule
+
+
+def write_rule_atomically(rule):
+    """Write rule through a same-filesystem temporary file."""
+    rules_directory = Path(rules_data_dir)
+    with tempfile.TemporaryDirectory(
+        prefix=".required-phrases-",
+        dir=rules_directory.parent,
+    ) as temporary_directory:
+        temporary_directory = Path(temporary_directory)
+        rule.dump(str(temporary_directory))
+        staged = temporary_directory / rule.identifier
+        with staged.open("rb+") as stream:
+            os.fsync(stream.fileno())
+        os.replace(staged, rules_directory / rule.identifier)
+
+
+def add_predicted_phrases(rule, phrases, counts, dry_run=False, verbose=False):
+    """Validate a complete rule update and write the rule at most once."""
+    updated_rule = prepare_predicted_phrases(
+        rule=rule,
+        phrases=phrases,
+        counts=counts,
+        verbose=verbose,
+    )
+    if not updated_rule:
+        return False
     if dry_run:
         return True
 
-    updated_rule.dump(rules_data_dir)
+    write_rule_atomically(updated_rule)
     rule.text = updated_rule.text
     rule.source = updated_rule.source
     return True

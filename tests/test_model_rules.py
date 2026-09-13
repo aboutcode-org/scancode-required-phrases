@@ -374,6 +374,40 @@ def test_remote_artifact_names_reject_unsafe_paths(name):
         model_rules._artifact_names({"files": {name: "digest"}})
 
 
+def test_load_predictor_resolves_snapshot_symlinks(tmp_path, monkeypatch):
+    snapshot = tmp_path / "snapshot"
+    blobs = tmp_path / "blobs"
+    snapshot.mkdir()
+    blobs.mkdir()
+    marker = {"files": {"model.safetensors": hashlib.sha256(b"weights").hexdigest()}}
+    marker_blob = blobs / "marker"
+    marker_blob.write_text(json.dumps(marker), encoding="utf-8")
+    weights_blob = blobs / "weights"
+    weights_blob.write_bytes(b"weights")
+    try:
+        (snapshot / "SUCCESS.json").symlink_to(marker_blob)
+        (snapshot / "model.safetensors").symlink_to(weights_blob)
+    except OSError:
+        pytest.skip("symbolic links are unavailable")
+
+    hub = SimpleNamespace(
+        hf_hub_download=lambda **kwargs: str(snapshot / "SUCCESS.json"),
+        snapshot_download=lambda **kwargs: str(snapshot),
+    )
+    monkeypatch.setitem(sys.modules, "huggingface_hub", hub)
+
+    def load(model_dir):
+        for name in ("SUCCESS.json", "model.safetensors"):
+            path = model_dir / name
+            assert path.is_file()
+            assert not path.is_symlink()
+        return "predictor"
+
+    monkeypatch.setattr(model_rules.RequiredPhrasePredictor, "from_model_dir", load)
+
+    assert model_rules.load_predictor("owner/model", revision="a" * 40) == "predictor"
+
+
 def test_load_predictor_stages_only_declared_remote_artifacts(tmp_path, monkeypatch):
     snapshot = tmp_path / "snapshot"
     snapshot.mkdir()

@@ -3,64 +3,121 @@
 
 """Add model-predicted required phrases to ScanCode license rules."""
 
+from copy import copy
+import json
 import os
 from pathlib import Path
+from pathlib import PurePosixPath
+import shutil
+import tempfile
 
 import click
 
 from licensedcode.models import rules_data_dir
 from licensedcode.required_phrases import add_required_phrase_to_rule
 from licensedcode.required_phrases import find_phrase_spans_in_text
-from licensedcode.required_phrases import get_base_rules_by_expression
+from licensedcode.required_phrases import get_updatable_rules_by_expression
 from licensedcode.required_phrases import RequiredPhraseRuleCandidate
 from licensedcode.tokenize import get_existing_required_phrase_spans
 
 from scancode_required_phrases.inference import RequiredPhrasePredictor
+from scancode_required_phrases.training import IMMUTABLE_REVISION
 
 
 MIN_TOKENS = 2
 MIN_SINGLE_TOKEN_LEN = 5
-MAX_RULE_TEXT = 4000
 
 
-def load_predictor(model, hf_token=None):
-    """Load a predictor from a local directory or Hugging Face repository."""
+def _artifact_names(success_marker):
+    """Return safe artifact paths listed in a model success marker."""
+    try:
+        files = success_marker["files"]
+    except (KeyError, TypeError) as error:
+        raise ValueError("Remote model has no valid file inventory") from error
+    if type(files) is not dict or not files:
+        raise ValueError("Remote model has no valid file inventory")
+
+    names = ["SUCCESS.json", *files]
+    for name in names:
+        if type(name) is not str or not name:
+            raise ValueError(f"Remote model contains an unsafe artifact path: {name!r}")
+        path = PurePosixPath(name)
+        if path.is_absolute() or ".." in path.parts:
+            raise ValueError(f"Remote model contains an unsafe artifact path: {name!r}")
+    return names
+
+
+def _load_remote_predictor(repository, revision, hf_token):
+    """Download only declared model artifacts and load them locally."""
+    from huggingface_hub import hf_hub_download
+    from huggingface_hub import snapshot_download
+
+    marker_path = hf_hub_download(
+        repo_id=repository,
+        filename="SUCCESS.json",
+        revision=revision,
+        token=hf_token,
+    )
+    try:
+        marker = json.loads(Path(marker_path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError("Remote model has no valid success marker") from error
+
+    artifact_names = _artifact_names(marker)
+    snapshot = Path(
+        snapshot_download(
+            repo_id=repository,
+            revision=revision,
+            token=hf_token,
+            allow_patterns=artifact_names,
+        )
+    )
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        model_dir = Path(temporary_directory)
+        for name in artifact_names:
+            source = snapshot / name
+            if not source.is_file():
+                raise ValueError(f"Remote model is missing artifact: {name}")
+            target = model_dir / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                target.hardlink_to(source)
+            except OSError:
+                shutil.copy2(source, target)
+        return RequiredPhrasePredictor.from_model_dir(model_dir)
+
+
+def load_predictor(model, hf_token=None, revision=None):
+    """Load a predictor from a local directory or pinned Hugging Face revision."""
     model_dir = Path(model)
-    if not model_dir.is_dir():
-        from huggingface_hub import snapshot_download
+    if model_dir.is_dir():
+        if revision:
+            raise ValueError("A model revision cannot be used with a local model directory")
+        return RequiredPhrasePredictor.from_model_dir(model_dir)
 
-        model_dir = Path(snapshot_download(repo_id=model, token=hf_token))
-    return RequiredPhrasePredictor.from_model_dir(model_dir)
-
-
-def is_updatable(rule):
-    """Return True if a rule can receive predicted required phrases."""
-    if rule.is_from_license:
-        return False
-    if len(rule.text) > MAX_RULE_TEXT:
-        return False
-    if not rule.is_approx_matchable:
-        return False
-    if rule.skip_for_required_phrase_generation:
-        return False
-    return not get_existing_required_phrase_spans(rule.text)
+    if not revision or not IMMUTABLE_REVISION.fullmatch(revision):
+        raise ValueError("A 40-character model revision is required for a remote model")
+    return _load_remote_predictor(model, revision, hf_token)
 
 
 def select_rules(license_expression=None):
-    """Return eligible rules grouped by license expression."""
+    """Return rules eligible for model prediction, grouped by expression."""
     try:
-        rules_by_expression = get_base_rules_by_expression(license_expression)
+        rules_by_expression = get_updatable_rules_by_expression(
+            license_expression=license_expression,
+            simple_expression=False,
+        )
     except KeyError:
         raise click.ClickException(
             f"No rules for license expression: {license_expression}"
         ) from None
 
-    selected = {}
+    selected_rules_by_expression = {}
     for expression, rules in rules_by_expression.items():
-        updatable = [rule for rule in rules if is_updatable(rule)]
-        if updatable:
-            selected[expression] = updatable
-    return selected
+        selected_rules = [rule for rule in rules if not get_existing_required_phrase_spans(rule.text)]
+        if selected_rules:
+            selected_rules_by_expression[expression] = selected_rules
+    return selected_rules_by_expression
 
 
 def new_counts():
@@ -69,49 +126,64 @@ def new_counts():
         truncated=0,
         rejected=0,
         not_found=0,
+        ambiguous=0,
+        conflicts=0,
         injected=0,
-        skipped=0,
+        changed=0,
         written=0,
     )
 
 
-def add_predicted_phrases(rule, phrases, counts, dry_run=False, verbose=False):
-    """Validate and add predicted phrases, writing the rule at most once."""
-    candidates = []
-    for phrase in phrases:
-        candidate = RequiredPhraseRuleCandidate.create(rule.license_expression, phrase)
-        if not candidate.is_good(rule, MIN_TOKENS, MIN_SINGLE_TOKEN_LEN):
-            counts["rejected"] += 1
-            continue
-        if not find_phrase_spans_in_text(rule.text, phrase):
-            counts["not_found"] += 1
-            continue
-        candidates.append(phrase)
+def candidate_issue(rule, phrase):
+    """Return why ``phrase`` cannot be safely added, or None."""
+    candidate = RequiredPhraseRuleCandidate.create(rule.license_expression, phrase)
+    if not candidate.is_good(rule, MIN_TOKENS, MIN_SINGLE_TOKEN_LEN):
+        return "rejected"
 
-    if not candidates:
+    spans = find_phrase_spans_in_text(rule.text, phrase)
+    if not spans:
+        return "not_found"
+    if len(spans) != 1:
+        return "ambiguous"
+
+
+def add_predicted_phrases(rule, phrases, counts, dry_run=False, verbose=False):
+    """Validate a complete rule update and write the rule at most once."""
+    accepted_phrases = []
+    for phrase in phrases:
+        issue = candidate_issue(rule, phrase)
+        if issue:
+            counts[issue] += 1
+            continue
+        accepted_phrases.append(phrase)
+
+    if not accepted_phrases:
         return False
 
-    original_text = rule.text
-    original_source = rule.source
-    source = f"{original_source} ml_model" if original_source else "ml_model"
-
-    for phrase in candidates:
-        updated = add_required_phrase_to_rule(
-            rule=rule,
+    accepted_phrases.sort(key=lambda phrase: (-len(phrase), phrase))
+    updated_rule = copy(rule)
+    source = f"{rule.source} ml_model" if rule.source else "ml_model"
+    for phrase in accepted_phrases:
+        if not add_required_phrase_to_rule(
+            rule=updated_rule,
             required_phrase=phrase,
             source=source,
             debug=verbose,
             dry_run=True,
-        )
-        if updated:
-            counts["injected"] += 1
-        else:
-            counts["skipped"] += 1
+        ):
+            counts["conflicts"] += 1
+            return False
 
-    if rule.text == original_text:
+    if updated_rule.text == rule.text:
         return False
-    if not dry_run:
-        rule.dump(rules_data_dir)
+
+    counts["injected"] += len(accepted_phrases)
+    if dry_run:
+        return True
+
+    updated_rule.dump(rules_data_dir)
+    rule.text = updated_rule.text
+    rule.source = updated_rule.source
     return True
 
 
@@ -153,7 +225,9 @@ def update_rules_from_predictions(
                 dry_run=dry_run,
                 verbose=verbose,
             ):
-                counts["written"] += 1
+                counts["changed"] += 1
+                if not dry_run:
+                    counts["written"] += 1
 
     return counts
 
@@ -163,6 +237,10 @@ def update_rules_from_predictions(
     "--model",
     required=True,
     help="Final model directory or Hugging Face repository.",
+)
+@click.option(
+    "--model-revision",
+    help="Full commit hash required for a Hugging Face model.",
 )
 @click.option(
     "--license-expression",
@@ -186,14 +264,28 @@ def update_rules_from_predictions(
     help="Print predictions for each rule.",
 )
 @click.help_option("-h", "--help")
-def add_model_required_phrases(model, license_expression, dry_run, limit, verbose):
+def add_model_required_phrases(
+    model,
+    model_revision,
+    license_expression,
+    dry_run,
+    limit,
+    verbose,
+):
     """Add model-predicted required phrases to license rules."""
     selected = select_rules(license_expression=license_expression)
     if not selected:
         click.echo("No eligible rules found")
         return
 
-    predictor = load_predictor(model, hf_token=os.environ.get("HF_TOKEN"))
+    try:
+        predictor = load_predictor(
+            model,
+            hf_token=os.environ.get("HF_TOKEN"),
+            revision=model_revision,
+        )
+    except ValueError as error:
+        raise click.ClickException(str(error)) from error
     counts = update_rules_from_predictions(
         selected=selected,
         predictor=predictor,
@@ -204,10 +296,12 @@ def add_model_required_phrases(model, license_expression, dry_run, limit, verbos
 
     click.echo(f"\nrules processed  : {counts['rules']}")
     click.echo(f"  truncated      : {counts['truncated']}")
-    click.echo(f"phrases injected : {counts['injected']}")
+    click.echo(f"phrases accepted : {counts['injected']}")
     click.echo(f"  rejected       : {counts['rejected']}")
     click.echo(f"  not found      : {counts['not_found']}")
-    click.echo(f"  nothing to add : {counts['skipped']}")
+    click.echo(f"  ambiguous      : {counts['ambiguous']}")
+    click.echo(f"  conflicts      : {counts['conflicts']}")
+    click.echo(f"rules changed    : {counts['changed']}")
     click.echo(f"rules written    : {counts['written']}")
 
     if dry_run:

@@ -83,6 +83,7 @@ def _load_remote_predictor(repository, revision, hf_token):
             source = snapshot / name
             if not source.is_file():
                 raise ValueError(f"Remote model is missing artifact: {name}")
+            source = source.resolve(strict=True)
             target = model_dir / name
             target.parent.mkdir(parents=True, exist_ok=True)
             try:

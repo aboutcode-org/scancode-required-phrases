@@ -13,7 +13,6 @@ pytest.importorskip("torchcrf")
 pytest.importorskip("transformers")
 
 from scancode_required_phrases import inference
-from scancode_required_phrases.inference import encode_words
 from scancode_required_phrases.inference import RequiredPhrasePredictor
 from scancode_required_phrases.inference import words_from_text
 from scancode_required_phrases.model import ConstrainedCRF
@@ -25,8 +24,8 @@ class FakeEncoding(dict):
 
     def __init__(self, word_ids):
         super().__init__(
-            input_ids=torch.zeros((1, len(word_ids)), dtype=torch.long),
-            attention_mask=torch.ones((1, len(word_ids)), dtype=torch.long),
+            input_ids=[0] * len(word_ids),
+            attention_mask=[1] * len(word_ids),
         )
         self._word_ids = word_ids
 
@@ -35,6 +34,10 @@ class FakeEncoding(dict):
 
 
 class FakeTokenizer:
+
+    is_fast = True
+    all_special_ids = [0]
+    vocab_size = 100
 
     def __init__(self, subwords=None):
         self.subwords = subwords or {}
@@ -92,14 +95,6 @@ def test_loads_predictor_from_validated_model(tmp_path, monkeypatch):
     assert predictor.model is model
     assert predictor.tokenizer is tokenizer
     assert predictor.max_length == 384
-
-
-def test_encode_words_removes_a_partially_truncated_word():
-    tokenizer = FakeTokenizer({"many": 3})
-    encoding, truncated = encode_words(tokenizer, ["one", "many", "three"], 4)
-
-    assert encoding.word_ids() == [None, 0, None]
-    assert truncated
 
 
 def test_predicts_bioes_phrase_without_mutation():

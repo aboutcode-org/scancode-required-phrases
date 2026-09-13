@@ -528,16 +528,17 @@ def _coverage_counts(word_ids):
     return counts
 
 
-def align_labels(tokens, word_labels, tokenizer, max_length):
-    """Align unchanged labels to a tokenizer-verified complete word prefix."""
-    if type(tokens) is not list or type(word_labels) is not list:
-        raise TypeError("tokens and word_labels must be lists")
-    if len(tokens) != len(word_labels) or not tokens:
-        raise ValueError("tokens and word_labels must have equal non-zero lengths")
-    if validate_bioes(word_labels):
-        raise ValueError("word_labels must be a valid BIOES sequence")
+def encode_complete_words(
+    tokens,
+    tokenizer,
+    max_length,
+    required_positions=(),
+):
+    """Encode and validate the longest complete-word prefix of ``tokens``."""
+    if type(tokens) is not list or not tokens:
+        raise ValueError("tokens must be a non-empty list")
     if getattr(tokenizer, "is_fast", True) is not True:
-        raise ValueError("Training requires a fast tokenizer with word IDs")
+        raise ValueError("A fast tokenizer with word IDs is required")
 
     call = {
         "is_split_into_words": True,
@@ -562,12 +563,7 @@ def align_labels(tokens, word_labels, tokenizer, max_length):
             f"full encoding: dataset words have zero subwords at positions {missing}",
         )
 
-    encoding = tokenizer(
-        tokens,
-        truncation=True,
-        max_length=max_length,
-        **call,
-    )
+    encoding = tokenizer(tokens, truncation=True, max_length=max_length, **call)
     word_ids, covered = _validated_word_ids(
         encoding, len(tokens), "retained encoding", special_ids, vocab_size
     )
@@ -583,10 +579,8 @@ def align_labels(tokens, word_labels, tokenizer, max_length):
                 )
             complete_words = word_id
 
-    omitted_positions = list(range(complete_words, len(tokens)))
-    omitted_required = [
-        position for position in omitted_positions if word_labels[position] != "O"
-    ]
+    omitted_positions = set(range(complete_words, len(tokens)))
+    omitted_required = sorted(omitted_positions.intersection(required_positions))
     if omitted_required:
         raise AlignmentError(
             "omitted-non-o",
@@ -622,6 +616,27 @@ def align_labels(tokens, word_labels, tokenizer, max_length):
     if len(encoding["attention_mask"]) != len(encoding["input_ids"]):
         raise AlignmentError("shape-mismatch", "tokenizer input and attention lengths differ")
 
+    return encoding, bool(omitted_positions)
+
+
+def align_labels(tokens, word_labels, tokenizer, max_length):
+    """Align unchanged labels to a tokenizer-verified complete word prefix."""
+    if type(tokens) is not list or type(word_labels) is not list:
+        raise TypeError("tokens and word_labels must be lists")
+    if len(tokens) != len(word_labels) or not tokens:
+        raise ValueError("tokens and word_labels must have equal non-zero lengths")
+    if validate_bioes(word_labels):
+        raise ValueError("word_labels must be a valid BIOES sequence")
+
+    required_positions = [position for position, label in enumerate(word_labels) if label != "O"]
+    encoding, truncated = encode_complete_words(
+        tokens,
+        tokenizer,
+        max_length,
+        required_positions=required_positions,
+    )
+    word_ids = encoding.word_ids()
+
     label_ids = []
     previous_word = None
     for word_id in word_ids:
@@ -633,7 +648,7 @@ def align_labels(tokens, word_labels, tokenizer, max_length):
             label_ids.append(IGNORE_INDEX)
         previous_word = word_id
     encoding["labels"] = label_ids
-    return encoding, bool(omitted_positions), False
+    return encoding, truncated, False
 
 
 def first_subword_positions(word_ids):
@@ -1290,7 +1305,10 @@ def _load_local_model(model_dir, offline=True):
         "loaded",
     )
     tokenizer = AutoTokenizer.from_pretrained(
-        str(model_dir), use_fast=True, local_files_only=True
+        str(model_dir),
+        use_fast=True,
+        local_files_only=True,
+        fix_mistral_regex=False,
     )
     if not tokenizer.is_fast:
         raise ValueError("Final_Model tokenizer is not fast")

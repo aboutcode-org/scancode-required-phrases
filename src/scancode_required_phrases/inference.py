@@ -10,6 +10,7 @@ from pathlib import Path
 
 from licensedcode.tokenize import required_phrase_splitter
 
+from scancode_required_phrases.training import encode_complete_words
 from scancode_required_phrases.training import extract_spans
 from scancode_required_phrases.training import first_subword_positions
 from scancode_required_phrases.training import ID2LABEL
@@ -39,41 +40,6 @@ def words_from_text(text):
     """Tokenize rule text exactly as the training dataset does."""
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     return required_phrase_splitter(unicodedata.normalize("NFKC", text))
-
-
-def _word_counts(word_ids):
-    counts = {}
-    for word_id in word_ids:
-        if word_id is not None:
-            counts[word_id] = counts.get(word_id, 0) + 1
-    return counts
-
-
-def encode_words(tokenizer, words, max_length):
-    """Encode the longest complete-word prefix and report truncation."""
-    call = dict(
-        is_split_into_words=True,
-        add_special_tokens=True,
-        return_tensors="pt",
-    )
-    full = tokenizer(words, truncation=False, **call)
-    encoding = tokenizer(words, truncation=True, max_length=max_length, **call)
-
-    full_counts = _word_counts(full.word_ids())
-    retained_counts = _word_counts(encoding.word_ids())
-    covered_words = max(retained_counts, default=-1) + 1
-    complete_words = covered_words
-
-    if covered_words and retained_counts[covered_words - 1] != full_counts[covered_words - 1]:
-        complete_words -= 1
-        encoding = tokenizer(words[:complete_words], truncation=False, **call)
-
-    if not complete_words:
-        raise ValueError("Tokenizer retained no complete words")
-    if encoding["input_ids"].shape[1] > max_length:
-        raise ValueError("Complete-word encoding exceeds the model maximum length")
-
-    return encoding, complete_words < len(words)
 
 
 def span_confidence(crf, word_emissions, tags, mask, free, span):
@@ -117,9 +83,9 @@ class RequiredPhrasePredictor:
         if not words:
             return PredictionResult(words=(), phrases=(), truncated=False)
 
-        encoding, truncated = encode_words(
+        encoding, truncated = encode_complete_words(
+            tokens=words,
             tokenizer=self.tokenizer,
-            words=words,
             max_length=self.max_length,
         )
         positions = first_subword_positions(encoding.word_ids())
@@ -127,8 +93,12 @@ class RequiredPhrasePredictor:
             return PredictionResult(words=tuple(words), phrases=(), truncated=False)
 
         device = next(self.model.parameters()).device
-        input_ids = encoding["input_ids"].to(device)
-        attention_mask = encoding["attention_mask"].to(device)
+        input_ids = torch.tensor([encoding["input_ids"]], dtype=torch.long, device=device)
+        attention_mask = torch.tensor(
+            [encoding["attention_mask"]],
+            dtype=torch.long,
+            device=device,
+        )
 
         with torch.inference_mode():
             emissions = self.model.emissions(input_ids, attention_mask)

@@ -54,8 +54,12 @@ reload and validation succeed. See ``docs/source/training.rst`` for details.
 Run read-only prediction
 ========================
 
-Load a validated final model and return candidate required phrases without
-changing a ScanCode rule or file:
+Install the inference dependencies, then load a validated final model and
+return candidate required phrases without changing a ScanCode rule or file:
+
+.. code-block:: console
+
+    python -m pip install ".[inference]"
 
 .. code-block:: python
 
@@ -76,9 +80,11 @@ a final model directory or Hugging Face repository:
 
     add-model-required-phrases --model model-output/final-model --dry-run --verbose
 
-The command validates each candidate with ScanCode's required-phrase helpers and
-writes each changed rule once. Rebuild the ScanCode license index after applying
-changes without ``--dry-run``.
+For a Hugging Face repository, also provide its full commit hash with
+``--model-revision``. The command rejects phrase text found more than once in a
+rule because ScanCode's mutation helper would mark every occurrence. It validates
+the complete rule update and writes each changed rule once. Rebuild the ScanCode
+license index after applying changes without ``--dry-run``.
 
 Development
 ===========

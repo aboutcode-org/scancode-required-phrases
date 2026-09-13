@@ -931,14 +931,25 @@ def test_local_loader_loads_saved_values_after_structural_validation(monkeypatch
         "from_config",
         lambda config: LocalBackbone(),
     )
+    tokenizer_calls = []
     monkeypatch.setattr(
         transformers.AutoTokenizer,
         "from_pretrained",
-        lambda *args, **kwargs: LocalTokenizer(),
+        lambda *args, **kwargs: tokenizer_calls.append((args, kwargs)) or LocalTokenizer(),
     )
 
     loaded, tokenizer = training._load_local_model(model_dir)
 
+    assert tokenizer_calls == [
+        (
+            (str(model_dir),),
+            {
+                "use_fast": True,
+                "local_files_only": True,
+                "fix_mistral_regex": False,
+            },
+        )
+    ]
     assert loaded.weight.item() == 3.0
     assert loaded.backbone.position_ids.device.type == "cpu"
     assert tokenizer.is_fast

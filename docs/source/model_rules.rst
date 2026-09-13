@@ -10,13 +10,15 @@ Use the command after reviewing predictions from a validated final model:
         --dry-run \
         --verbose
 
-``--model`` accepts a local final-model directory or a Hugging Face repository.
-The model must pass the hardened publication checks before inference starts.
+Install the ``inference`` extra before using this command. ``--model`` accepts
+a local final-model directory or a Hugging Face repository. Remote models also
+require their full commit hash through ``--model-revision``. The model must pass
+the publication checks before inference starts.
 
 The command skips rules that cannot receive generated required phrases and
-rules that already contain required-phrase markers. Each prediction must pass
-ScanCode's candidate and locatability checks. Accepted phrases are applied in
-memory and each changed rule is written once.
+rules that already contain required-phrase markers. It rejects phrase text
+found more than once because ScanCode would mark every occurrence. The complete
+rule update is checked in memory and each changed rule is written once.
 
 Use ``--license-expression`` to process one expression and ``--limit`` for a
 small review run. Remove ``--dry-run`` only after reviewing the predictions.

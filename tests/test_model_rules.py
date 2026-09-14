@@ -3,43 +3,59 @@
 
 import hashlib
 import json
+from pathlib import Path
+import stat
 import sys
 from types import SimpleNamespace
 
-import click
-from click.testing import CliRunner
 import pytest
 
+from licensedcode.models import InvalidRule
 from licensedcode.models import Rule
 
 from scancode_required_phrases import model_rules
 from scancode_required_phrases.inference import PhrasePrediction
 from scancode_required_phrases.inference import PredictionResult
-from scancode_required_phrases.model_rules import add_model_required_phrases
-from scancode_required_phrases.model_rules import add_predicted_phrases
-from scancode_required_phrases.model_rules import new_counts
-from scancode_required_phrases.model_rules import prepare_predicted_phrases
-from scancode_required_phrases.model_rules import select_rules
-from scancode_required_phrases.model_rules import update_rules_from_predictions
 
 
-class FakeRule:
-    def __init__(self, text="some license text here"):
-        self.text = text
+TEXT = (
+    "Permission is granted under the MIT License to use copy modify merge publish "
+    "distribute sublicense and sell copies of this software without restriction"
+)
+
+
+def make_rule(identifier="mit_test.RULE", text=TEXT, source=None, **kwargs):
+    data = dict(
+        identifier=identifier,
+        license_expression="mit",
+        text=text,
+        source=source,
+        is_license_notice=True,
+        relevance=100,
+    )
+    data.update(kwargs)
+    return Rule(**data)
+
+
+def dump_rule(rule, directory):
+    rule.dump(str(directory))
+    return directory / rule.identifier
 
 
 class FakePredictor:
     def __init__(self, phrases, truncated=False):
         self.phrases = phrases
         self.truncated = truncated
+        self.calls = []
 
     def predict(self, text):
+        self.calls.append(text)
         predictions = tuple(
             PhrasePrediction(
                 text=phrase,
                 start_word=0,
                 end_word=0,
-                confidence=1.0,
+                score=0.9,
             )
             for phrase in self.phrases
         )
@@ -50,191 +66,399 @@ class FakePredictor:
         )
 
 
-def make_rule(text, source=None):
-    rule = Rule(
-        license_expression="mit",
-        identifier="mit_test.RULE",
-        text=text,
-        source=source,
-        is_license_reference=True,
-        relevance=100,
+def test_prediction_rule_issue_matches_scancode_eligibility():
+    rule = SimpleNamespace(
+        is_deprecated=False,
+        is_from_license=False,
+        text=TEXT,
+        is_approx_matchable=True,
+        skip_for_required_phrase_generation=False,
     )
-    return rule
+    assert model_rules.prediction_rule_issue(rule) is None
+
+    rule.is_deprecated = True
+    assert model_rules.prediction_rule_issue(rule) == "deprecated"
+    rule.is_deprecated = False
+    rule.is_from_license = True
+    assert model_rules.prediction_rule_issue(rule) == "from_license"
+    rule.is_from_license = False
+    rule.text = "x" * 4001
+    assert model_rules.prediction_rule_issue(rule) == "too_long"
+    rule.text = TEXT
+    rule.is_approx_matchable = False
+    assert model_rules.prediction_rule_issue(rule) == "not_approx_matchable"
+    rule.is_approx_matchable = True
+    rule.skip_for_required_phrase_generation = True
+    assert model_rules.prediction_rule_issue(rule) == "skipped"
+    rule.skip_for_required_phrase_generation = False
+    rule.text = "Permission under the {{MIT License}} applies"
+    assert model_rules.prediction_rule_issue(rule) == "has_required_phrases"
 
 
-TEXT = "Permission is granted under the MIT License to do things with this"
+def test_load_prediction_rule_returns_exact_resolved_path(tmp_path):
+    rule_path = dump_rule(make_rule(), tmp_path)
+
+    loaded_path, loaded_rule = model_rules.load_prediction_rule(rule_path, "mit")
+
+    assert loaded_path == rule_path.resolve()
+    assert loaded_rule.identifier == rule_path.name
+    assert loaded_rule.text == TEXT
 
 
-def test_select_rules_reuses_scancode_selection_and_excludes_marked_rules(monkeypatch):
+@pytest.mark.parametrize("name", ["missing.RULE", "not-a-rule.txt"])
+def test_load_prediction_rule_rejects_invalid_file(tmp_path, name):
+    path = tmp_path / name
+    if path.suffix != ".RULE":
+        path.write_text("not a rule", encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        model_rules.load_prediction_rule(path)
+
+
+def test_load_prediction_rule_rejects_a_directory(tmp_path):
+    with pytest.raises(ValueError, match="not a file"):
+        model_rules.load_prediction_rule(tmp_path)
+
+
+def test_load_prediction_rule_rejects_expression_mismatch(tmp_path):
+    rule_path = dump_rule(make_rule(), tmp_path)
+
+    with pytest.raises(ValueError, match="does not use expression"):
+        model_rules.load_prediction_rule(rule_path, "apache-2.0")
+
+
+def test_load_prediction_rule_rejects_deprecated_rule(tmp_path):
+    rule = make_rule(is_deprecated=True, relevance=0)
+    rule_path = dump_rule(rule, tmp_path)
+
+    with pytest.raises(ValueError, match="deprecated"):
+        model_rules.load_prediction_rule(rule_path)
+
+
+def test_load_prediction_rule_rejects_symlink(tmp_path):
+    rule_path = dump_rule(make_rule(), tmp_path)
+    symlink = tmp_path / "linked.RULE"
+    try:
+        symlink.symlink_to(rule_path)
+    except OSError:
+        pytest.skip("symbolic links are unavailable")
+
+    with pytest.raises(ValueError, match="symbolic link"):
+        model_rules.load_prediction_rule(symlink)
+
+
+def test_load_prediction_rules_rejects_symlink_rule(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    rule_path = dump_rule(make_rule(), outside)
+    rules_directory = tmp_path / "rules"
+    rules_directory.mkdir()
+    symlink = rules_directory / "linked.RULE"
+    try:
+        symlink.symlink_to(rule_path)
+    except OSError:
+        pytest.skip("symbolic links are unavailable")
+
+    with pytest.raises(ValueError, match="symbolic link"):
+        model_rules.load_prediction_rules(rules_directory)
+
+
+def test_load_prediction_rules_allows_a_symlink_root(tmp_path):
+    rules_directory = tmp_path / "rules"
+    rules_directory.mkdir()
+    dump_rule(make_rule(), rules_directory)
+    symlink = tmp_path / "rules-link"
+    try:
+        symlink.symlink_to(rules_directory, target_is_directory=True)
+    except OSError:
+        pytest.skip("symbolic links are unavailable")
+
+    selected = model_rules.load_prediction_rules(symlink)
+
+    assert [path for path, _rule in selected] == [
+        (rules_directory / "mit_test.RULE").resolve()
+    ]
+
+
+def test_load_prediction_rules_is_sorted_top_level_and_filtered(tmp_path):
+    dump_rule(make_rule("z.RULE"), tmp_path)
+    dump_rule(make_rule("a.RULE"), tmp_path)
+    dump_rule(make_rule("apache.RULE", license_expression="apache-2.0"), tmp_path)
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    dump_rule(make_rule("nested.RULE"), nested)
+
+    selected = model_rules.load_prediction_rules(tmp_path, "mit")
+
+    assert [path.name for path, _rule in selected] == ["a.RULE", "z.RULE"]
+
+
+def test_load_prediction_rules_validates_the_complete_set_once(tmp_path, monkeypatch):
+    dump_rule(make_rule("first.RULE"), tmp_path)
+    dump_rule(make_rule("second.RULE"), tmp_path)
+    calls = []
+    licenses = object()
+    monkeypatch.setattr(model_rules, "get_licenses_db", lambda: licenses)
+    monkeypatch.setattr(
+        model_rules,
+        "validate_rules",
+        lambda **kwargs: calls.append(kwargs),
+    )
+
+    model_rules.load_prediction_rules(tmp_path)
+
+    assert len(calls) == 1
+    assert calls[0]["licenses_by_key"] is licenses
+    assert [rule.identifier for rule in calls[0]["rules"]] == [
+        "first.RULE",
+        "second.RULE",
+    ]
+
+
+def test_load_prediction_rules_rejects_duplicate_identifiers(tmp_path, monkeypatch):
+    first_path = tmp_path / "first.RULE"
+    second_path = tmp_path / "second.RULE"
+    first_path.touch()
+    second_path.touch()
+    rule = make_rule("duplicate.RULE")
+
+    monkeypatch.setattr(
+        model_rules,
+        "_load_rule_file",
+        lambda path: (Path(path).resolve(), rule),
+    )
+
+    with pytest.raises(ValueError, match="duplicate identifiers"):
+        model_rules.load_prediction_rules(tmp_path)
+
+
+def test_load_prediction_rules_aborts_for_a_malformed_rule(tmp_path):
+    dump_rule(make_rule("good.RULE"), tmp_path)
+    (tmp_path / "bad.RULE").write_text("not frontmatter", encoding="utf-8")
+
+    with pytest.raises(InvalidRule):
+        model_rules.load_prediction_rules(tmp_path)
+
+
+def test_load_prediction_rules_omits_ineligible_rules(tmp_path):
+    dump_rule(make_rule("eligible.RULE"), tmp_path)
+    dump_rule(make_rule("marked.RULE", text="The {{MIT License}} applies here"), tmp_path)
+
+    selected = model_rules.load_prediction_rules(tmp_path)
+
+    assert [path.name for path, _rule in selected] == ["eligible.RULE"]
+
+
+def test_select_installed_prediction_rules_reuses_scancode_selection(
+    tmp_path,
+    monkeypatch,
+):
+    first = make_rule("first.RULE")
+    second = make_rule("second.RULE", text="The {{MIT License}} applies here")
+    dump_rule(first, tmp_path)
+    dump_rule(second, tmp_path)
     calls = []
 
     def get_rules(**kwargs):
         calls.append(kwargs)
-        return {
-            "mit": [FakeRule(), FakeRule(text="under the {{mit license}} terms")],
-            "bsd-new": [],
-        }
+        return {"mit": [second, first]}
 
     monkeypatch.setattr(model_rules, "get_updatable_rules_by_expression", get_rules)
+    monkeypatch.setattr(model_rules, "rules_data_dir", str(tmp_path))
 
-    selected = select_rules("mit")
+    selected = model_rules.select_installed_prediction_rules("mit")
 
     assert calls == [{"license_expression": "mit", "simple_expression": False}]
-    assert list(selected) == ["mit"]
-    assert len(selected["mit"]) == 1
+    assert [(path.name, rule.identifier) for path, rule in selected] == [
+        ("first.RULE", "first.RULE")
+    ]
 
 
-def test_select_rules_reports_an_unknown_expression(monkeypatch):
+def test_select_installed_prediction_rules_reports_unknown_expression(monkeypatch):
     def get_rules(**kwargs):
         raise KeyError(kwargs["license_expression"])
 
     monkeypatch.setattr(model_rules, "get_updatable_rules_by_expression", get_rules)
-    with pytest.raises(click.ClickException, match="No rules"):
-        select_rules("unknown")
+
+    with pytest.raises(ValueError, match="No rules"):
+        model_rules.select_installed_prediction_rules("unknown")
+
+
+def test_predict_rule_candidates_returns_validation_issues():
+    rule = make_rule(text="MIT License applies here. MIT License applies there.")
+    predictor = FakePredictor(["MIT License", "is"])
+
+    result, candidates = model_rules.predict_rule_candidates(rule, predictor)
+
+    assert result.truncated is False
+    assert predictor.calls == [rule.text]
+    assert [(prediction.text, issue) for prediction, issue in candidates] == [
+        ("MIT License", "ambiguous"),
+        ("is", "rejected"),
+    ]
+
+
+def test_predict_rule_candidates_preserves_truncation():
+    predictor = FakePredictor([], truncated=True)
+
+    result, candidates = model_rules.predict_rule_candidates(make_rule(), predictor)
+
+    assert result.truncated is True
+    assert candidates == ()
 
 
 def test_prepare_predicted_phrases_returns_updated_copy():
-    rule = make_rule(TEXT, source="mit_1.RULE")
-    counts = new_counts()
+    rule = make_rule(source="mit_1.RULE")
 
-    updated_rule = prepare_predicted_phrases(
-        rule=rule,
-        phrases=["MIT License", "do things"],
-        counts=counts,
+    updated = model_rules.prepare_predicted_phrases(
+        rule,
+        ["MIT License", "without restriction"],
     )
 
-    assert updated_rule.text == (
-        "Permission is granted under the {{MIT License}} to {{do things}} with this"
-    )
-    assert updated_rule.source == "mit_1.RULE ml_model"
-    assert counts["injected"] == 2
+    assert "{{MIT License}}" in updated.text
+    assert "{{without restriction}}" in updated.text
+    assert updated.source == "mit_1.RULE ml_model"
     assert rule.text == TEXT
     assert rule.source == "mit_1.RULE"
 
 
-def test_add_predicted_phrases_dry_run_does_not_mutate_rule():
-    rule = make_rule(TEXT, source="mit_1.RULE")
-    counts = new_counts()
+def test_prepare_predicted_phrases_does_not_duplicate_source():
+    rule = make_rule(source="mit_1.RULE ml_model")
 
-    updated = add_predicted_phrases(
-        rule=rule,
-        phrases=["MIT License", "do things"],
-        counts=counts,
-        dry_run=True,
-    )
+    updated = model_rules.prepare_predicted_phrases(rule, ["MIT License"])
 
-    assert updated
-    assert counts["injected"] == 2
-    assert rule.text == TEXT
-    assert rule.source == "mit_1.RULE"
+    assert updated.source == "mit_1.RULE ml_model"
 
 
-def test_add_predicted_phrases_rejects_an_unsuitable_candidate():
-    rule = make_rule(TEXT)
-    counts = new_counts()
-
-    assert not add_predicted_phrases(rule, ["is"], counts, dry_run=True)
-    assert counts["rejected"] == 1
-    assert "{{" not in rule.text
-
-
-def test_add_predicted_phrases_counts_a_candidate_not_in_the_rule():
-    rule = make_rule(TEXT)
-    counts = new_counts()
-
-    assert not add_predicted_phrases(
-        rule,
-        ["Apache License"],
-        counts,
-        dry_run=True,
-    )
-    assert counts["not_found"] == 1
+def test_prepare_predicted_phrases_rejects_duplicate_text():
+    with pytest.raises(ValueError, match="Duplicate"):
+        model_rules.prepare_predicted_phrases(
+            make_rule(),
+            ["MIT License", "MIT License"],
+        )
 
 
-def test_add_predicted_phrases_rejects_ambiguous_occurrences():
-    text = "MIT License applies here. MIT License applies there."
-    rule = make_rule(text)
-    counts = new_counts()
-
-    assert not add_predicted_phrases(rule, ["MIT License"], counts, dry_run=True)
-    assert counts["ambiguous"] == 1
-    assert rule.text == text
+def test_prepare_predicted_phrases_rejects_an_invalid_phrase():
+    with pytest.raises(ValueError, match="not safe"):
+        model_rules.prepare_predicted_phrases(make_rule(), ["is"])
 
 
-def test_add_predicted_phrases_rejects_an_ambiguous_shorter_phrase():
-    text = "Redistribution clause and binary Redistribution clause"
-    rule = make_rule(text)
-    counts = new_counts()
-
-    assert add_predicted_phrases(
-        rule,
-        ["Redistribution clause", "binary Redistribution clause"],
-        counts,
-        dry_run=True,
-    )
-    assert counts["ambiguous"] == 1
-    assert counts["injected"] == 1
-    assert rule.text == text
-
-
-def test_add_predicted_phrases_rolls_back_a_conflicting_update(monkeypatch):
-    rule = make_rule(TEXT)
+def test_prepare_predicted_phrases_adds_longest_phrase_first(monkeypatch):
     calls = []
 
     def add_phrase(rule, required_phrase, **kwargs):
         calls.append(required_phrase)
-        if len(calls) == 2:
-            return False
-        rule.text = f"{{{{{required_phrase}}}}} " + rule.text
+        rule.text = f"{rule.text} {required_phrase}"
         return True
 
+    monkeypatch.setattr(model_rules, "candidate_issue", lambda rule, phrase: None)
     monkeypatch.setattr(model_rules, "add_required_phrase_to_rule", add_phrase)
-    counts = new_counts()
 
-    assert not add_predicted_phrases(
-        rule,
-        ["MIT License", "do things"],
-        counts,
-        dry_run=True,
+    model_rules.prepare_predicted_phrases(
+        make_rule(),
+        ["MIT License", "Permission under the MIT License"],
     )
-    assert calls == ["MIT License", "do things"]
-    assert counts["conflicts"] == 1
-    assert counts["injected"] == 0
-    assert rule.text == TEXT
+
+    assert calls == ["Permission under the MIT License", "MIT License"]
 
 
-def test_add_predicted_phrases_writes_exact_rule_once(tmp_path, monkeypatch):
-    rule = make_rule(TEXT, source="mit_1.RULE")
-    original_dump = Rule.dump
-    writes = []
+def test_prepare_predicted_phrases_rejects_complete_conflict():
+    rule = make_rule(text="binary Redistribution clause applies to these software copies")
 
-    def dump(rule, rules_data_dir):
-        writes.append(rule.identifier)
-        original_dump(rule, rules_data_dir)
+    with pytest.raises(ValueError, match="conflict"):
+        model_rules.prepare_predicted_phrases(
+            rule,
+            ["Redistribution clause", "binary Redistribution clause"],
+        )
+    assert rule.text == "binary Redistribution clause applies to these software copies"
 
-    monkeypatch.setattr(Rule, "dump", dump)
-    monkeypatch.setattr(model_rules, "rules_data_dir", str(tmp_path))
 
-    assert add_predicted_phrases(rule, ["MIT License", "do things"], new_counts())
-    saved = Rule.from_file(str(tmp_path / rule.identifier))
-    assert writes == [rule.identifier]
-    assert saved.text == (
-        "Permission is granted under the {{MIT License}} to {{do things}} with this"
+def test_serialize_rule_returns_scancode_dump_bytes(tmp_path):
+    rule = make_rule()
+    rule_path = dump_rule(rule, tmp_path)
+    updated = model_rules.prepare_predicted_phrases(rule, ["MIT License"])
+
+    content = model_rules.serialize_rule(updated, rule_path)
+    expected_dir = tmp_path / "expected"
+    expected_dir.mkdir()
+    updated.dump(str(expected_dir))
+
+    assert content == (expected_dir / rule.identifier).read_bytes()
+
+
+@pytest.mark.parametrize("newline", [b"\n", b"\r\n"])
+def test_serialize_rule_preserves_line_endings(tmp_path, newline):
+    rule_path = dump_rule(make_rule(), tmp_path)
+    original = rule_path.read_bytes().replace(b"\r\n", b"\n")
+    rule_path.write_bytes(original.replace(b"\n", newline))
+    rule = Rule.from_file(str(rule_path))
+    updated = model_rules.prepare_predicted_phrases(rule, ["MIT License"])
+
+    content = model_rules.serialize_rule(updated, rule_path)
+
+    if newline == b"\r\n":
+        assert b"\r\n" in content
+        assert b"\n" not in content.replace(b"\r\n", b"")
+    else:
+        assert b"\r\n" not in content
+
+
+def test_serialize_rule_rejects_identifier_path_mismatch(tmp_path):
+    with pytest.raises(ValueError, match="does not match"):
+        model_rules.serialize_rule(make_rule(), tmp_path / "other.RULE")
+
+
+def test_write_rule_atomically_writes_exact_path_and_preserves_mode(tmp_path):
+    rule = make_rule()
+    rule_path = dump_rule(rule, tmp_path)
+    original_mode = stat.S_IMODE(rule_path.stat().st_mode)
+    updated = model_rules.prepare_predicted_phrases(rule, ["MIT License"])
+    content = model_rules.serialize_rule(updated, rule_path)
+
+    written_hash = model_rules.write_rule_atomically(
+        rule_path,
+        content,
+        model_rules.file_sha256(rule_path),
     )
-    assert saved.source == "mit_1.RULE ml_model"
-    assert rule.text == saved.text
-    assert rule.source == saved.source
+
+    assert rule_path.read_bytes() == content
+    assert written_hash == hashlib.sha256(content).hexdigest()
+    assert stat.S_IMODE(rule_path.stat().st_mode) == original_mode
+    assert not list(tmp_path.glob(".*.tmp"))
 
 
-def test_add_predicted_phrases_keeps_existing_file_when_atomic_replace_fails(
-    tmp_path,
-    monkeypatch,
-):
-    rule = make_rule(TEXT)
-    rule.dump(str(tmp_path))
-    rule_path = tmp_path / rule.identifier
+def test_write_rule_atomically_rejects_a_stale_rule(tmp_path):
+    rule_path = dump_rule(make_rule(), tmp_path)
     before = rule_path.read_bytes()
-    monkeypatch.setattr(model_rules, "rules_data_dir", str(tmp_path))
+
+    with pytest.raises(ValueError, match="changed"):
+        model_rules.write_rule_atomically(rule_path, b"replacement", "0" * 64)
+
+    assert rule_path.read_bytes() == before
+    assert not list(tmp_path.glob(".*.tmp"))
+
+
+def test_write_rule_atomically_detects_change_before_replace(tmp_path, monkeypatch):
+    rule_path = dump_rule(make_rule(), tmp_path)
+    expected_hash = model_rules.file_sha256(rule_path)
+    real_file_sha256 = model_rules.file_sha256
+
+    def change_rule(path):
+        Path(path).write_bytes(b"changed outside this process")
+        return real_file_sha256(path)
+
+    monkeypatch.setattr(model_rules, "file_sha256", change_rule)
+
+    with pytest.raises(ValueError, match="changed"):
+        model_rules.write_rule_atomically(rule_path, b"replacement", expected_hash)
+
+    assert rule_path.read_bytes() == b"changed outside this process"
+    assert not list(tmp_path.glob(".*.tmp"))
+
+
+def test_write_rule_atomically_keeps_file_when_replace_fails(tmp_path, monkeypatch):
+    rule_path = dump_rule(make_rule(), tmp_path)
+    before = rule_path.read_bytes()
     monkeypatch.setattr(
         model_rules.os,
         "replace",
@@ -242,112 +466,14 @@ def test_add_predicted_phrases_keeps_existing_file_when_atomic_replace_fails(
     )
 
     with pytest.raises(OSError, match="simulated replace failure"):
-        add_predicted_phrases(rule, ["MIT License"], new_counts())
+        model_rules.write_rule_atomically(
+            rule_path,
+            b"replacement",
+            model_rules.file_sha256(rule_path),
+        )
 
     assert rule_path.read_bytes() == before
-    assert rule.text == TEXT
-
-
-def test_update_rules_from_predictions_processes_selected_rules():
-    rule = make_rule(TEXT)
-
-    counts = update_rules_from_predictions(
-        selected={"mit": [rule]},
-        predictor=FakePredictor(["MIT License"]),
-        dry_run=True,
-    )
-
-    assert counts["rules"] == 1
-    assert counts["injected"] == 1
-    assert counts["changed"] == 1
-    assert counts["written"] == 0
-    assert rule.text == TEXT
-
-
-def test_update_rules_from_predictions_counts_truncation_and_honors_limit():
-    rules = [make_rule(TEXT) for _ in range(3)]
-
-    counts = update_rules_from_predictions(
-        selected={"mit": rules},
-        predictor=FakePredictor([], truncated=True),
-        dry_run=True,
-        limit=2,
-    )
-
-    assert counts["rules"] == 2
-    assert counts["truncated"] == 2
-
-
-def test_command_does_not_load_a_model_without_eligible_rules(monkeypatch):
-    monkeypatch.setattr(model_rules, "select_rules", lambda **kwargs: {})
-
-    def fail(*args, **kwargs):
-        raise AssertionError("model should not load")
-
-    monkeypatch.setattr(model_rules, "load_predictor", fail)
-    result = CliRunner().invoke(add_model_required_phrases, ["--model", "unused"])
-
-    assert result.exit_code == 0
-    assert "No eligible rules found" in result.output
-
-
-def test_command_wires_selection_prediction_and_dry_run(monkeypatch, tmp_path):
-    selected = {"mit": [object()]}
-    predictor = object()
-    selections = []
-    loads = []
-    updates = []
-    monkeypatch.delenv("HF_TOKEN", raising=False)
-
-    monkeypatch.setattr(
-        model_rules,
-        "select_rules",
-        lambda **kwargs: selections.append(kwargs) or selected,
-    )
-    monkeypatch.setattr(
-        model_rules,
-        "load_predictor",
-        lambda *args, **kwargs: loads.append((args, kwargs)) or predictor,
-    )
-
-    def update(**kwargs):
-        updates.append(kwargs)
-        return new_counts()
-
-    monkeypatch.setattr(model_rules, "update_rules_from_predictions", update)
-    result = CliRunner().invoke(
-        add_model_required_phrases,
-        [
-            "--model",
-            str(tmp_path),
-            "--license-expression",
-            "mit",
-            "--dry-run",
-            "--limit",
-            "7",
-            "--verbose",
-        ],
-    )
-
-    assert result.exit_code == 0
-    assert selections == [{"license_expression": "mit"}]
-    assert loads == [
-        (
-            (str(tmp_path),),
-            {"hf_token": None, "revision": None},
-        )
-    ]
-    assert updates == [
-        {
-            "selected": selected,
-            "predictor": predictor,
-            "dry_run": True,
-            "limit": 7,
-            "verbose": True,
-        }
-    ]
-    assert "rules written    : 0" in result.output
-    assert "Dry run: no rules were saved" in result.output
+    assert not list(tmp_path.glob(".*.tmp"))
 
 
 def test_load_predictor_rejects_a_revision_for_a_local_model(tmp_path):
@@ -413,11 +539,7 @@ def test_load_predictor_stages_only_declared_remote_artifacts(tmp_path, monkeypa
     snapshot.mkdir()
     artifact = snapshot / "model.safetensors"
     artifact.write_bytes(b"weights")
-    marker = {
-        "files": {
-            "model.safetensors": hashlib.sha256(b"weights").hexdigest(),
-        }
-    }
+    marker = {"files": {"model.safetensors": hashlib.sha256(b"weights").hexdigest()}}
     marker_path = snapshot / "SUCCESS.json"
     marker_path.write_text(json.dumps(marker), encoding="utf-8")
     (snapshot / ".gitattributes").write_text("metadata", encoding="utf-8")
@@ -441,14 +563,11 @@ def test_load_predictor_stages_only_declared_remote_artifacts(tmp_path, monkeypa
     monkeypatch.setattr(model_rules.RequiredPhrasePredictor, "from_model_dir", load)
     revision = "a" * 40
 
-    assert (
-        model_rules.load_predictor(
-            "owner/model",
-            hf_token="token",
-            revision=revision,
-        )
-        is predictor
-    )
+    assert model_rules.load_predictor(
+        "owner/model",
+        hf_token="token",
+        revision=revision,
+    ) is predictor
     assert marker_downloads == [
         {
             "repo_id": "owner/model",

@@ -1,25 +1,19 @@
-Add model-predicted required phrases
-====================================
+Model prediction and rule preparation
+=====================================
 
-Use the command after reviewing predictions from a validated final model:
+Install the ``inference`` extra before loading a final model. A local model must
+pass the final-model publication checks. A remote Hugging Face model also
+requires its full commit hash.
 
-.. code-block:: console
+The ``scancode_required_phrases.model_rules`` module provides reusable functions
+to:
 
-    add-model-required-phrases \
-        --model model-output/final-model \
-        --dry-run \
-        --verbose
+- load eligible rules from one file, a directory, or installed ScanCode data;
+- return model predictions with their ScanCode validation result;
+- prepare a complete rule update without mutating the original rule;
+- serialize and atomically write a rule to its exact source path.
 
-Install the ``inference`` extra before using this command. ``--model`` accepts
-a local final-model directory or a Hugging Face repository. Remote models also
-require their full commit hash through ``--model-revision``. The model must pass
-the publication checks before inference starts.
-
-The command skips rules that cannot receive generated required phrases and
-rules that already contain required-phrase markers. It rejects phrase text
-found more than once because ScanCode would mark every occurrence. The complete
-rule update is checked in memory and each changed rule is written once.
-
-Use ``--license-expression`` to process one expression and ``--limit`` for a
-small review run. Remove ``--dry-run`` only after reviewing the predictions.
-Rebuild the ScanCode license index after writing rules.
+Phrase text found more than once is rejected because ScanCode's mutation helper
+would mark every occurrence. A complete phrase set is prepared before any file
+is written. The stacked review workflow provides the user-facing command and
+human approval process.

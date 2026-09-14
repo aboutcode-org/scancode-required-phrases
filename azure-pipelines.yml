@@ -29,7 +29,9 @@ jobs:
                     tests/test_model.py \
                     tests/test_export.py \
                     tests/test_inference.py \
-                    tests/test_model_rules.py
+                    tests/test_model_rules.py \
+                    tests/test_review.py \
+                    tests/test_model_cli.py
             displayName: Run training unit tests
 
     - template: etc/ci/azure-posix.yml

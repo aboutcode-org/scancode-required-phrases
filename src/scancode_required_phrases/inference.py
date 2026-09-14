@@ -24,7 +24,7 @@ class PhrasePrediction:
     text: str
     start_word: int
     end_word: int
-    confidence: float
+    score: float
 
 
 @dataclass(frozen=True)
@@ -42,8 +42,8 @@ def words_from_text(text):
     return required_phrase_splitter(unicodedata.normalize("NFKC", text))
 
 
-def span_confidence(crf, word_emissions, tags, mask, free, span):
-    """Return the CRF probability mass agreeing with one decoded span."""
+def span_score(crf, word_emissions, tags, mask, free, span):
+    """Return the CRF score for one decoded span."""
     start, end = span
     pinned = word_emissions.clone()
     floor = float(word_emissions.min()) - 10000.0
@@ -55,8 +55,8 @@ def span_confidence(crf, word_emissions, tags, mask, free, span):
         pinned[0, position, label] = keep
 
     constrained = crf(pinned, tags, mask=mask, reduction="none")
-    confidence = float((free - constrained).detach().exp())
-    return min(max(confidence, 0.0), 1.0)
+    score = float((free - constrained).detach().exp())
+    return min(max(score, 0.0), 1.0)
 
 
 class RequiredPhrasePredictor:
@@ -120,7 +120,7 @@ class RequiredPhrasePredictor:
                         text=" ".join(words[start : end + 1]),
                         start_word=start,
                         end_word=end,
-                        confidence=span_confidence(
+                        score=span_score(
                             self.model.crf,
                             word_emissions,
                             tags,

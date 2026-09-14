@@ -33,7 +33,6 @@ class FakeEncoding(dict):
 
 
 class FakeTokenizer:
-
     is_fast = True
     all_special_ids = [0]
     vocab_size = 100
@@ -109,7 +108,7 @@ def test_predicts_bioes_phrase_without_mutation():
     assert [phrase.text for phrase in result.phrases] == ["MIT License"]
     assert result.phrases[0].start_word == 3
     assert result.phrases[0].end_word == 4
-    assert 0.0 <= result.phrases[0].confidence <= 1.0
+    assert 0.0 <= result.phrases[0].score <= 1.0
     assert not result.truncated
 
 

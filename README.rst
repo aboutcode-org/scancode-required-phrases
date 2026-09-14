@@ -76,21 +76,14 @@ return candidate required phrases without changing a ScanCode rule or file:
 
 Predictions require human review before they are added to license rules.
 
-Add predicted phrases to rules
-==============================
+Prepare predicted phrases for review
+====================================
 
-Review predictions before modifying rules. Then run the integration command on
-a final model directory or Hugging Face repository:
-
-.. code-block:: console
-
-    add-model-required-phrases --model model-output/final-model --dry-run --verbose
-
-For a Hugging Face repository, also provide its full commit hash with
-``--model-revision``. The command rejects phrase text found more than once in a
-rule because ScanCode's mutation helper would mark every occurrence. It validates
-the complete rule update and writes each changed rule once. Rebuild the ScanCode
-license index after applying changes without ``--dry-run``.
+The ``model_rules`` module loads eligible rules, validates model predictions,
+and prepares complete rule updates without changing the original rules. It also
+provides an atomic writer that requires the exact rule path and its current file
+hash. User-facing review and application are added by the stacked review
+workflow.
 
 Development
 ===========

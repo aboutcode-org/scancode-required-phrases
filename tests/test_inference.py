@@ -24,8 +24,8 @@ class FakeEncoding(dict):
 
     def __init__(self, word_ids):
         super().__init__(
-            input_ids=torch.zeros((1, len(word_ids)), dtype=torch.long),
-            attention_mask=torch.ones((1, len(word_ids)), dtype=torch.long),
+            input_ids=[0] * len(word_ids),
+            attention_mask=[1] * len(word_ids),
         )
         self._word_ids = word_ids
 
@@ -35,9 +35,21 @@ class FakeEncoding(dict):
 
 class FakeTokenizer:
 
-    def __call__(self, words, max_length=512, **kwargs):
-        word_ids = [None] + list(range(len(words))) + [None]
-        return FakeEncoding(word_ids[:max_length])
+    is_fast = True
+    all_special_ids = [0]
+    vocab_size = 100
+
+    def __init__(self, subwords=None):
+        self.subwords = subwords or {}
+
+    def __call__(self, words, truncation, max_length=None, **kwargs):
+        word_ids = [None]
+        for index, word in enumerate(words):
+            word_ids.extend([index] * self.subwords.get(word, 1))
+        word_ids.append(None)
+        if truncation and len(word_ids) > max_length:
+            word_ids = word_ids[: max_length - 1] + [None]
+        return FakeEncoding(word_ids)
 
 
 class StubTagger(torch.nn.Module):
@@ -99,7 +111,7 @@ def test_predicts_bioes_phrase_without_mutation():
     assert [phrase.text for phrase in result.phrases] == ["MIT License"]
     assert result.phrases[0].start_word == 3
     assert result.phrases[0].end_word == 4
-    assert 0.0 <= result.phrases[0].confidence <= 1.0
+    assert 0.0 <= result.phrases[0].score <= 1.0
     assert not result.truncated
 
 
@@ -115,9 +127,9 @@ def test_predicts_single_word_phrase():
     assert [phrase.text for phrase in result.phrases] == ["MIT"]
 
 
-def test_drops_phrase_cut_by_truncation():
+def test_keeps_valid_phrase_at_truncation_boundary():
     predictor = RequiredPhrasePredictor(
-        model=StubTagger({2: "B-REQ", 3: "I-REQ"}),
+        model=StubTagger({2: "S-REQ"}),
         tokenizer=FakeTokenizer(),
         max_length=5,
     )
@@ -125,7 +137,7 @@ def test_drops_phrase_cut_by_truncation():
     result = predictor.predict("one two three four five six")
 
     assert result.truncated
-    assert result.phrases == ()
+    assert [phrase.text for phrase in result.phrases] == ["three"]
 
 
 def test_empty_text_does_not_run_model():

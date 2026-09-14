@@ -67,7 +67,7 @@ Read-only prediction
 
 ``RequiredPhrasePredictor`` loads only a final model that passes the publication
 checks. Its ``predict()`` method uses the same ScanCode tokenization as the
-training dataset and returns phrase text, word offsets, confidence, and whether
+training dataset and returns phrase text, word offsets, a model score, and whether
 the input was truncated. It does not change rules or write files.
 
 .. code-block:: python

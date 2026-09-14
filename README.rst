@@ -70,14 +70,34 @@ return candidate required phrases without changing a ScanCode rule or file:
 
 Predictions require human review before they are added to license rules.
 
-Prepare predicted phrases for review
-====================================
+Review model-predicted phrases
+==============================
 
-The ``model_rules`` module loads eligible rules, validates model predictions,
-and prepares complete rule updates without changing the original rules. It also
-provides an atomic writer that requires the exact rule path and its current file
-hash. User-facing review and application are added by the stacked review
-workflow.
+Install the inference dependencies and run the review command. It uses the
+pinned public model by default:
+
+.. code-block:: console
+
+    python -m pip install ".[inference]"
+    add-model-required-phrases --rule path/to/example.RULE
+
+The default mode shows each phrase, model score, text context, and exact rule
+diff before asking for approval. Decisions are saved in a resumable session.
+Use ``--rules-dir`` for top-level rule files in a directory or ``--all`` for
+eligible installed ScanCode rules.
+
+Read-only prediction never creates a session or changes a rule:
+
+.. code-block:: console
+
+    add-model-required-phrases --rule path/to/example.RULE --predict-only
+
+A wrong required phrase can cause a false negative. Batch processing therefore
+requires explicit score thresholds and ``--yes`` before any write. Rules with
+pending phrases are deferred unchanged while fully decided rules can be applied.
+``--dry-run`` always writes zero rules. Run ``scancode-reindex-licenses`` after
+changing installed ScanCode rules. Use ``--model`` for a custom local or remote
+model.
 
 Development
 ===========

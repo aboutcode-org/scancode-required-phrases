@@ -136,11 +136,6 @@ class AlignmentError(ValueError):
         self.reason = reason
 
 
-def _require_exact_type(name, value, expected):
-    if type(value) is not expected:
-        raise TypeError(f"{name} must be {expected.__name__}, not {type(value).__name__}")
-
-
 def _require_finite_number(name, value, minimum=None, maximum=None, minimum_open=False):
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise TypeError(f"{name} must be a number")
@@ -190,8 +185,13 @@ def validate_config(config, check_paths=True):
         raise ValueError(f"Unsupported precision: {config.precision}")
 
     for name in (
-        "max_length", "epochs", "batch_size", "grad_accum",
-        "early_stopping_patience", "limit", "seed",
+        "max_length",
+        "epochs",
+        "batch_size",
+        "grad_accum",
+        "early_stopping_patience",
+        "limit",
+        "seed",
     ):
         value = getattr(config, name)
         if isinstance(value, bool) or not isinstance(value, int):
@@ -232,9 +232,7 @@ def validate_config(config, check_paths=True):
     if type(config.label_weights) is not list or len(config.label_weights) != len(LABELS):
         raise ValueError(f"label_weights must contain exactly {len(LABELS)} values")
     for index, weight in enumerate(config.label_weights):
-        _require_finite_number(
-            f"label_weights[{index}]", weight, 0, 1_000_000, minimum_open=True
-        )
+        _require_finite_number(f"label_weights[{index}]", weight, 0, 1_000_000, minimum_open=True)
 
 
 def prepare_output_dir(output_dir, resume=False):
@@ -271,7 +269,9 @@ def load_jsonl(path):
                 try:
                     yield line_number, json.loads(line)
                 except json.JSONDecodeError as error:
-                    raise ValueError(f"{path} line {line_number}: malformed JSON: {error.msg}") from error
+                    raise ValueError(
+                        f"{path} line {line_number}: malformed JSON: {error.msg}"
+                    ) from error
     except (OSError, UnicodeError) as error:
         raise ValueError(f"Cannot read split file {path}: {error}") from error
 
@@ -321,14 +321,10 @@ def validate_record(record, path, line_number):
         raise ValueError(f"{location} ({identifier}): no tokens")
     for index, token in enumerate(tokens):
         if type(token) is not str or not token:
-            raise ValueError(
-                f"{location} ({identifier}): token {index} must be a non-empty string"
-            )
+            raise ValueError(f"{location} ({identifier}): token {index} must be a non-empty string")
     for index, label in enumerate(labels):
         if type(label) is not str or not label:
-            raise ValueError(
-                f"{location} ({identifier}): label {index} must be a non-empty string"
-            )
+            raise ValueError(f"{location} ({identifier}): label {index} must be a non-empty string")
     if len(tokens) != len(labels):
         raise ValueError(
             f"{location} ({identifier}): {len(tokens)} tokens and {len(labels)} labels"
@@ -366,9 +362,7 @@ def validate_raw_split_hashes(paths, expected_h0):
         expected = expected_h0[split].get("sha256")
         actual = sha256(path)
         if actual != expected:
-            raise ValueError(
-                f"{split} split changed during the run: {actual} != {expected}"
-            )
+            raise ValueError(f"{split} split changed during the run: {actual} != {expected}")
 
 
 def report_content_duplicates(records_by_split):
@@ -471,15 +465,21 @@ def _validated_word_ids(encoding, word_count, context, special_ids, vocab_size=N
         raise AlignmentError(
             "shape-mismatch", f"{context}: word IDs, input IDs, and attention mask lengths differ"
         )
-    if any(isinstance(value, bool) or not isinstance(value, int) or value < 0 for value in input_ids):
-        raise AlignmentError("invalid-input-id", f"{context}: input IDs must be non-negative integers")
+    if any(
+        isinstance(value, bool) or not isinstance(value, int) or value < 0 for value in input_ids
+    ):
+        raise AlignmentError(
+            "invalid-input-id", f"{context}: input IDs must be non-negative integers"
+        )
     if vocab_size is not None and any(value >= vocab_size for value in input_ids):
-        raise AlignmentError("invalid-input-id", f"{context}: input ID is outside tokenizer vocabulary")
+        raise AlignmentError(
+            "invalid-input-id", f"{context}: input ID is outside tokenizer vocabulary"
+        )
     if any(type(value) is not int or value != 1 for value in attention_mask):
-        raise AlignmentError("invalid-attention-mask", f"{context}: attention mask must be active and binary")
-    covered_positions = [
-        index for index, word_id in enumerate(word_ids) if word_id is not None
-    ]
+        raise AlignmentError(
+            "invalid-attention-mask", f"{context}: attention mask must be active and binary"
+        )
+    covered_positions = [index for index, word_id in enumerate(word_ids) if word_id is not None]
     if not covered_positions:
         raise AlignmentError("zero-coverage", f"{context}: tokenizer covered no dataset words")
     first_covered = covered_positions[0]
@@ -488,9 +488,7 @@ def _validated_word_ids(encoding, word_count, context, special_ids, vocab_size=N
         raise AlignmentError(
             "missing-special-token", f"{context}: required boundary special tokens are absent"
         )
-    boundary_positions = list(range(first_covered)) + list(
-        range(last_covered + 1, len(word_ids))
-    )
+    boundary_positions = list(range(first_covered)) + list(range(last_covered + 1, len(word_ids)))
     if not special_ids or any(input_ids[index] not in special_ids for index in boundary_positions):
         raise AlignmentError(
             "missing-special-token", f"{context}: boundary IDs are not tokenizer special tokens"
@@ -501,9 +499,13 @@ def _validated_word_ids(encoding, word_count, context, special_ids, vocab_size=N
         )
     covered = [word_ids[index] for index in covered_positions]
     if any(type(word_id) is not int for word_id in covered):
-        raise AlignmentError("invalid-word-id", f"{context}: tokenizer returned a non-integer word ID")
+        raise AlignmentError(
+            "invalid-word-id", f"{context}: tokenizer returned a non-integer word ID"
+        )
     if any(word_id < 0 or word_id >= word_count for word_id in covered):
-        raise AlignmentError("out-of-range-word-id", f"{context}: tokenizer returned an out-of-range word ID")
+        raise AlignmentError(
+            "out-of-range-word-id", f"{context}: tokenizer returned an out-of-range word ID"
+        )
     distinct = []
     previous = None
     for word_id in covered:
@@ -516,7 +518,9 @@ def _validated_word_ids(encoding, word_count, context, special_ids, vocab_size=N
                 )
         previous = word_id
     if distinct[0] != 0:
-        raise AlignmentError("coverage-gap", f"{context}: tokenizer coverage does not start at word 0")
+        raise AlignmentError(
+            "coverage-gap", f"{context}: tokenizer coverage does not start at word 0"
+        )
     return word_ids, covered
 
 
@@ -584,9 +588,7 @@ def align_labels(tokens, word_labels, tokenizer, max_length):
             complete_words = word_id
 
     omitted_positions = list(range(complete_words, len(tokens)))
-    omitted_required = [
-        position for position in omitted_positions if word_labels[position] != "O"
-    ]
+    omitted_required = [position for position in omitted_positions if word_labels[position] != "O"]
     if omitted_required:
         raise AlignmentError(
             "omitted-non-o",
@@ -793,9 +795,7 @@ def decode_row(pred_row, label_row, row=0):
         )
         if label == IGNORE_INDEX:
             continue
-        prediction = _integer_id(
-            "prediction", pred_row[column], row, column, set(ID2LABEL)
-        )
+        prediction = _integer_id("prediction", pred_row[column], row, column, set(ID2LABEL))
         actual.append(ID2LABEL[label])
         predicted.append(ID2LABEL[prediction])
     if not actual:
@@ -846,9 +846,7 @@ def _validate_crf_metric_padding(pred_row, label_row, row):
         elif padding_started:
             raise ValueError(f"CRF metric row {row} padding must be left aligned")
         elif prediction == IGNORE_INDEX:
-            raise ValueError(
-                f"CRF active prediction at row {row}, column {column} is IGNORE_INDEX"
-            )
+            raise ValueError(f"CRF active prediction at row {row}, column {column} is IGNORE_INDEX")
 
 
 def compute_metrics(eval_pred, use_crf=False):
@@ -1161,6 +1159,7 @@ def _load_state_file(model_path):
     model_path = Path(model_path)
     if model_path.suffix == ".safetensors":
         from safetensors.torch import load_file
+
         return load_file(str(model_path))
     return torch.load(model_path, map_location="cpu", weights_only=True)
 
@@ -1289,9 +1288,7 @@ def _load_local_model(model_dir, offline=True):
         "saved",
         "loaded",
     )
-    tokenizer = AutoTokenizer.from_pretrained(
-        str(model_dir), use_fast=True, local_files_only=True
-    )
+    tokenizer = AutoTokenizer.from_pretrained(str(model_dir), use_fast=True, local_files_only=True)
     if not tokenizer.is_fast:
         raise ValueError("Final_Model tokenizer is not fast")
     if any(not torch.isfinite(tensor).all() for tensor in model.state_dict().values()):
@@ -1388,11 +1385,20 @@ def validate_publishable_model(model_dir):
     if type(dataset) is not dict or not {"paths", "h0", "h1", "h2", "report"} <= set(dataset):
         raise ValueError("Final_Model manifest dataset provenance is incomplete")
     if type(manifest["source"]) is not dict or not {
-        "repository", "root", "branch", "commit", "dirty"
+        "repository",
+        "root",
+        "branch",
+        "commit",
+        "dirty",
     } <= set(manifest["source"]):
         raise ValueError("Final_Model source provenance is incomplete")
     if type(manifest["runtime"]) is not dict or not {
-        "python", "platform", "torch", "transformers", "optimizer", "precision"
+        "python",
+        "platform",
+        "torch",
+        "transformers",
+        "optimizer",
+        "precision",
     } <= set(manifest["runtime"]):
         raise ValueError("Final_Model runtime provenance is incomplete")
     if not isinstance(manifest["completed_checks"], list) or not manifest["completed_checks"]:
@@ -1455,8 +1461,7 @@ def stage_final_model(output_dir, model, tokenizer, artifact_config):
     model.backbone.config.save_pretrained(str(stage))
     tokenizer.save_pretrained(str(stage))
     state = {
-        name: tensor.detach().cpu().contiguous()
-        for name, tensor in model.state_dict().items()
+        name: tensor.detach().cpu().contiguous() for name, tensor in model.state_dict().items()
     }
     save_file(state, str(stage / "model.safetensors"))
     write_json_atomic(stage / "train_config.json", artifact_config)
@@ -1606,15 +1611,12 @@ def validate_precision(precision):
     """Validate the selected training precision."""
     import torch
 
-    if precision == "bf16" and not (
-        torch.cuda.is_available() and torch.cuda.is_bf16_supported()
-    ):
+    if precision == "bf16" and not (torch.cuda.is_available() and torch.cuda.is_bf16_supported()):
         raise ValueError("bf16 requires a CUDA device with BF16 support")
 
 
 def run_training(config):
     """Validate, train, verify, and transactionally publish a Final_Model."""
-    import torch
     from transformers import AutoConfig
     from transformers import AutoTokenizer
     from transformers import DataCollatorForTokenClassification
@@ -1641,9 +1643,7 @@ def run_training(config):
     )
     if not tokenizer.is_fast:
         raise RuntimeError("Training requires a fast tokenizer with word IDs")
-    tokenizer_revision = resolve_tokenizer_revision(
-        config.model_name, config.model_revision
-    )
+    tokenizer_revision = resolve_tokenizer_revision(config.model_name, config.model_revision)
     backbone_config = AutoConfig.from_pretrained(
         config.model_name,
         revision=config.model_revision,
@@ -1816,9 +1816,7 @@ def run_training(config):
 
         phase = "staging"
         artifact_config = _artifact_config(config, resolved_revision)
-        stage = stage_final_model(
-            config.output_dir, model, tokenizer, artifact_config
-        )
+        stage = stage_final_model(config.output_dir, model, tokenizer, artifact_config)
         staged_state = _load_state_file(stage / "model.safetensors")
         validate_state_dicts(
             _canonical_state_dict(model.state_dict()),
@@ -1930,36 +1928,65 @@ def run_training(config):
     help="Full immutable model and tokenizer commit revision.",
 )
 @click.option(
-    "--max-length", default=MAX_LENGTH,
-    type=click.IntRange(min=3, max=MAX_LENGTH), show_default=True,
+    "--max-length",
+    default=MAX_LENGTH,
+    type=click.IntRange(min=3, max=MAX_LENGTH),
+    show_default=True,
 )
 @click.option("--epochs", default=8, type=click.IntRange(min=1), show_default=True)
 @click.option("--batch-size", default=1, type=click.IntRange(min=1), show_default=True)
 @click.option("--grad-accum", default=16, type=click.IntRange(min=1), show_default=True)
-@click.option("--base-lr", default=2e-5, type=click.FloatRange(min=0, min_open=True), show_default=True)
-@click.option("--head-lr", default=1e-4, type=click.FloatRange(min=0, min_open=True), show_default=True)
-@click.option("--aux-ce-weight", default=0.3, type=click.FloatRange(min=0), show_default=True)
 @click.option(
-    "--optimizer", type=click.Choice(["adamw", "adamw-8bit"]),
-    default="adamw", show_default=True,
+    "--base-lr", default=2e-5, type=click.FloatRange(min=0, min_open=True), show_default=True
 )
 @click.option(
-    "--precision", type=click.Choice(["fp32", "bf16"]),
-    default="fp32", show_default=True,
+    "--head-lr", default=1e-4, type=click.FloatRange(min=0, min_open=True), show_default=True
+)
+@click.option("--aux-ce-weight", default=0.3, type=click.FloatRange(min=0), show_default=True)
+@click.option(
+    "--optimizer",
+    type=click.Choice(["adamw", "adamw-8bit"]),
+    default="adamw",
+    show_default=True,
+)
+@click.option(
+    "--precision",
+    type=click.Choice(["fp32", "bf16"]),
+    default="fp32",
+    show_default=True,
 )
 @click.option("--no-crf", is_flag=True, default=False, help="Train without the CRF head.")
 @click.option("--evaluate-test", is_flag=True, help="Evaluate test data after selection.")
 @click.option(
-    "--with-isr", is_flag=True,
+    "--with-isr",
+    is_flag=True,
     help="Report predicted-phrase locatability during final test evaluation.",
 )
-@click.option("--limit", default=0, type=click.IntRange(min=0), help="Limit effective examples per split.")
+@click.option(
+    "--limit", default=0, type=click.IntRange(min=0), help="Limit effective examples per split."
+)
 @click.option("--resume", is_flag=True, hidden=True, help="Unsupported.")
 @click.option("--seed", default=42, type=click.IntRange(min=0), show_default=True)
 def main(
-    data_dir, output_dir, model_name, model_revision, max_length, epochs,
-    batch_size, grad_accum, base_lr, head_lr, aux_ce_weight, optimizer,
-    precision, no_crf, evaluate_test, with_isr, limit, resume, seed,
+    data_dir,
+    output_dir,
+    model_name,
+    model_revision,
+    max_length,
+    epochs,
+    batch_size,
+    grad_accum,
+    base_lr,
+    head_lr,
+    aux_ce_weight,
+    optimizer,
+    precision,
+    no_crf,
+    evaluate_test,
+    with_isr,
+    limit,
+    resume,
+    seed,
 ):
     """Train the required phrase tagger from a positive BIOES dataset."""
     if with_isr and not evaluate_test:

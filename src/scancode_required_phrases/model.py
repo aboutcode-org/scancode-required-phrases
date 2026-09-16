@@ -57,9 +57,7 @@ class ConstrainedCRF(CRF):
 
     def __init__(self, num_tags, batch_first=False):
         if num_tags != len(LABELS):
-            raise ValueError(
-                f"ConstrainedCRF needs {len(LABELS)} tags, received {num_tags}"
-            )
+            raise ValueError(f"ConstrainedCRF needs {len(LABELS)} tags, received {num_tags}")
         super().__init__(num_tags, batch_first=batch_first)
         start_mask, transition_mask, end_mask = build_constraint_masks()
         self.register_buffer("start_mask", start_mask, persistent=False)
@@ -90,13 +88,10 @@ class ConstrainedCRF(CRF):
 
     def _validate_inputs(self, emissions, tags=None, mask=None):
         if emissions.dim() != 3:
-            raise ValueError(
-                f"emissions must have rank 3, received shape {tuple(emissions.shape)}"
-            )
+            raise ValueError(f"emissions must have rank 3, received shape {tuple(emissions.shape)}")
         if emissions.size(2) != self.num_tags:
             raise ValueError(
-                f"emissions last dimension must be {self.num_tags}, "
-                f"received {emissions.size(2)}"
+                f"emissions last dimension must be {self.num_tags}, received {emissions.size(2)}"
             )
 
         batch_size = emissions.size(0 if self.batch_first else 1)

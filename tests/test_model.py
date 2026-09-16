@@ -263,9 +263,7 @@ def test_constrained_crf_padding_is_ignored_without_non_finite_loss():
         [active_emissions, torch.full((1, 1, len(LABELS)), 1000.0)],
         dim=1,
     )
-    padded_tags = torch.tensor(
-        [[LABEL2ID["B-REQ"], LABEL2ID["E-REQ"], len(LABELS) + 10]]
-    )
+    padded_tags = torch.tensor([[LABEL2ID["B-REQ"], LABEL2ID["E-REQ"], len(LABELS) + 10]])
     padded_mask = torch.tensor([[True, True, False]])
 
     active_likelihood = crf(

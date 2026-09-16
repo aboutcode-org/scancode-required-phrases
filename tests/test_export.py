@@ -310,7 +310,7 @@ def test_crf_export_rejects_unsupported_artifact(tmp_path, monkeypatch, field, v
 
 
 def test_generic_publishable_load_allows_non_crf_onnx_artifacts(tmp_path, monkeypatch):
-    torch = pytest.importorskip("torch")
+    pytest.importorskip("torch")
     model_dir = tmp_path / "final-model"
     model_dir.mkdir()
 

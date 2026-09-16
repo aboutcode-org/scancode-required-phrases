@@ -104,7 +104,11 @@ def make_split_paths(tmp_path, records=None):
         "test": [make_record("test.RULE")],
     }
     paths = {}
-    for split, filename in (("train", "train.jsonl"), ("validation", "val.jsonl"), ("test", "test.jsonl")):
+    for split, filename in (
+        ("train", "train.jsonl"),
+        ("validation", "val.jsonl"),
+        ("test", "test.jsonl"),
+    ):
         path = tmp_path / filename
         write_jsonl(path, records[split])
         paths[split] = path
@@ -235,9 +239,7 @@ def test_align_labels_uses_first_subwords_and_full_coverage():
         full_ids=[None, 0, 1, 1, None],
         retained_ids=[None, 0, 1, 1, None],
     )
-    encoding, truncated, cut = align_labels(
-        ["MIT", "License"], ["B-REQ", "E-REQ"], tokenizer, 8
-    )
+    encoding, truncated, cut = align_labels(["MIT", "License"], ["B-REQ", "E-REQ"], tokenizer, 8)
     assert encoding["labels"] == [
         IGNORE_INDEX,
         LABEL2ID["B-REQ"],
@@ -249,9 +251,7 @@ def test_align_labels_uses_first_subwords_and_full_coverage():
 
 
 @pytest.mark.parametrize(
-    (
-        "full_ids", "retained_ids", "reason"
-    ),
+    ("full_ids", "retained_ids", "reason"),
     [
         ([None, 0, 1, 1, None], [None, 0, 1, None], "omitted-non-o"),
         ([None, 0, 2, None], [None, 0, 2, None], "noncontiguous-coverage"),
@@ -645,7 +645,10 @@ def test_cli_requires_revision_and_describes_isr_as_locatability(tmp_path):
 
 def test_cli_rejects_resume_and_isr_without_test(tmp_path):
     arguments = [
-        "--data-dir", str(tmp_path), "--model-revision", REVISION,
+        "--data-dir",
+        str(tmp_path),
+        "--model-revision",
+        REVISION,
     ]
     result = CliRunner().invoke(main, arguments + ["--with-isr"])
     assert result.exit_code == 2
@@ -714,9 +717,7 @@ def test_promotion_writes_marker_last_and_is_publishable(tmp_path):
     assert validate_publishable_model(destination) == marker
 
 
-def test_promotion_marker_failure_rolls_back_and_leaves_no_final_model(
-    monkeypatch, tmp_path
-):
+def test_promotion_marker_failure_rolls_back_and_leaves_no_final_model(monkeypatch, tmp_path):
     stage = tmp_path / "final-model.tmp"
     stage.mkdir()
     (stage / "model.safetensors").write_bytes(b"weights")
@@ -764,9 +765,7 @@ def test_limit_does_not_hide_late_alignment_rejections(tmp_path):
 
 
 def test_split_with_no_effective_example_is_rejected(tmp_path):
-    bad = make_record(
-        "bad.RULE", tokens=["bad", "record"], labels=["B-REQ", "E-REQ"]
-    )
+    bad = make_record("bad.RULE", tokens=["bad", "record"], labels=["B-REQ", "E-REQ"])
     records = {
         "train": [bad],
         "validation": [make_record("val.RULE")],
@@ -858,9 +857,7 @@ def test_alignment_rejects_word_id_and_model_input_shape_mismatch():
             return encoding
 
     with pytest.raises(AlignmentError) as caught:
-        align_labels(
-            ["MIT", "License"], ["B-REQ", "E-REQ"], BadShapeTokenizer(), 8
-        )
+        align_labels(["MIT", "License"], ["B-REQ", "E-REQ"], BadShapeTokenizer(), 8)
     assert caught.value.reason == "shape-mismatch"
 
 
@@ -887,9 +884,7 @@ def test_publishability_rejects_unknown_artifact_configuration_fields(tmp_path):
         validate_publishable_model(model_dir)
 
 
-def test_local_loader_loads_saved_values_after_structural_validation(
-    monkeypatch, tmp_path
-):
+def test_local_loader_loads_saved_values_after_structural_validation(monkeypatch, tmp_path):
     torch = pytest.importorskip("torch")
     safetensors = pytest.importorskip("safetensors.torch")
     transformers = pytest.importorskip("transformers")
@@ -949,9 +944,7 @@ def test_local_loader_loads_saved_values_after_structural_validation(
     assert tokenizer.is_fast
 
 
-def test_final_model_loader_rejects_unpublished_stage_before_local_loading(
-    monkeypatch, tmp_path
-):
+def test_final_model_loader_rejects_unpublished_stage_before_local_loading(monkeypatch, tmp_path):
     stage = tmp_path / "final-model.tmp"
     stage.mkdir()
     monkeypatch.setattr(
@@ -964,12 +957,16 @@ def test_final_model_loader_rejects_unpublished_stage_before_local_loading(
 
 
 def test_repository_identity_removes_all_url_credentials():
-    assert training._redacted_repository_identity(
-        "https://user:password@example.com/repo.git?token=secret#credential"
-    ) == "https://example.com/repo.git"
-    assert training._redacted_repository_identity(
-        "git@example.com:aboutcode/repo.git"
-    ) == "example.com:aboutcode/repo.git"
+    assert (
+        training._redacted_repository_identity(
+            "https://user:password@example.com/repo.git?token=secret#credential"
+        )
+        == "https://example.com/repo.git"
+    )
+    assert (
+        training._redacted_repository_identity("git@example.com:aboutcode/repo.git")
+        == "example.com:aboutcode/repo.git"
+    )
 
 
 def test_selected_checkpoint_must_be_a_child_directory(tmp_path):
@@ -985,9 +982,7 @@ def test_selected_checkpoint_must_be_a_child_directory(tmp_path):
         training.validate_selected_checkpoint(trainer, tmp_path)
 
 
-def test_run_training_validates_every_raw_line_before_tokenizer_loading(
-    monkeypatch, tmp_path
-):
+def test_run_training_validates_every_raw_line_before_tokenizer_loading(monkeypatch, tmp_path):
     config = make_config(tmp_path)
     with (config.data_dir / "test.jsonl").open("a", encoding="utf-8") as stream:
         stream.write("{malformed}\n")
@@ -1021,9 +1016,7 @@ def test_run_training_validates_every_raw_line_before_tokenizer_loading(
     assert not config.output_dir.exists()
 
 
-def test_run_training_records_offline_reload_failure_without_publication(
-    monkeypatch, tmp_path
-):
+def test_run_training_records_offline_reload_failure_without_publication(monkeypatch, tmp_path):
     config = make_config(tmp_path)
     raw_report = {
         "h0": {},

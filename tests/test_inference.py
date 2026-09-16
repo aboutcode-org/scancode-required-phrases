@@ -21,7 +21,6 @@ from scancode_required_phrases.training import LABELS
 
 
 class FakeEncoding(dict):
-
     def __init__(self, word_ids):
         super().__init__(
             input_ids=torch.zeros((1, len(word_ids)), dtype=torch.long),
@@ -34,14 +33,12 @@ class FakeEncoding(dict):
 
 
 class FakeTokenizer:
-
     def __call__(self, words, max_length=512, **kwargs):
         word_ids = [None] + list(range(len(words))) + [None]
         return FakeEncoding(word_ids[:max_length])
 
 
 class StubTagger(torch.nn.Module):
-
     def __init__(self, tagged):
         super().__init__()
         self.anchor = torch.nn.Parameter(torch.zeros(1))

@@ -301,9 +301,7 @@ def _exact_one_word_tie(start, end):
             emissions = np.zeros((1, len(start)), dtype=np.float32)
             for label in legal:
                 label = int(label)
-                baseline = -(
-                    np.float64(start[label]) + np.float64(end[label]) + 10_000.0
-                )
+                baseline = -(np.float64(start[label]) + np.float64(end[label]) + 10_000.0)
                 emissions[0, label] = np.float32(baseline)
             emissions[0, left] = left_emission
             emissions[0, right] = right_emission
@@ -347,8 +345,7 @@ def check_viterbi_matches_crf(tagger, num_tags):
     )
     if numpy_tie_path != tie_path:
         raise AssertionError(
-            f"NumPy Viterbi disagrees with PyTorch for exact tie: "
-            f"{numpy_tie_path} != {tie_path}"
+            f"NumPy Viterbi disagrees with PyTorch for exact tie: {numpy_tie_path} != {tie_path}"
         )
     tie_error = validate_bioes([labels[tag] for tag in tie_path])
     if tie_error:
@@ -426,9 +423,7 @@ def export_crf_matrices(model_dir, output_dir):
     """Export effective constrained matrices without importing ONNX packages."""
     import numpy as np
 
-    tagger, _tokenizer, config, marker = _load_publishable_artifact(
-        model_dir, require_crf=True
-    )
+    tagger, _tokenizer, config, marker = _load_publishable_artifact(model_dir, require_crf=True)
     start, transitions, end = check_viterbi_matches_crf(tagger, len(config["labels"]))
     stage, output_dir = _prepare_export_stage(model_dir, output_dir)
     try:
@@ -500,9 +495,7 @@ def export_onnx_emissions(model_dir, output_dir, opset=14):
             do_constant_folding=True,
         )
 
-        session = onnxruntime.InferenceSession(
-            str(onnx_path), providers=["CPUExecutionProvider"]
-        )
+        session = onnxruntime.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
         feeds = {
             "input_ids": sample["input_ids"].numpy(),
             "attention_mask": sample["attention_mask"].numpy(),

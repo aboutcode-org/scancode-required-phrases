@@ -484,6 +484,23 @@ def test_load_predictor_requires_a_remote_revision():
         model_rules.load_predictor("owner/model")
 
 
+def test_load_predictor_reports_before_loading_local_model(tmp_path, monkeypatch):
+    events = []
+    monkeypatch.setattr(
+        model_rules.RequiredPhrasePredictor,
+        "from_model_dir",
+        lambda model_dir: events.append(("load", model_dir)) or "predictor",
+    )
+
+    predictor = model_rules.load_predictor(
+        tmp_path,
+        before_model_load=lambda: events.append(("before", None)),
+    )
+
+    assert predictor == "predictor"
+    assert events == [("before", None), ("load", tmp_path)]
+
+
 @pytest.mark.parametrize(
     "name",
     [
@@ -544,14 +561,27 @@ def test_load_predictor_stages_only_declared_remote_artifacts(tmp_path, monkeypa
 
     marker_downloads = []
     snapshot_downloads = []
+    events = []
+
+    def download_marker(**kwargs):
+        events.append("marker")
+        marker_downloads.append(kwargs)
+        return str(marker_path)
+
+    def download_snapshot(**kwargs):
+        events.append("snapshot")
+        snapshot_downloads.append(kwargs)
+        return str(snapshot)
+
     hub = SimpleNamespace(
-        hf_hub_download=lambda **kwargs: marker_downloads.append(kwargs) or str(marker_path),
-        snapshot_download=lambda **kwargs: snapshot_downloads.append(kwargs) or str(snapshot),
+        hf_hub_download=download_marker,
+        snapshot_download=download_snapshot,
     )
     monkeypatch.setitem(sys.modules, "huggingface_hub", hub)
     predictor = object()
 
     def load(model_dir):
+        events.append("load")
         assert sorted(path.name for path in model_dir.iterdir()) == [
             "SUCCESS.json",
             "model.safetensors",
@@ -566,9 +596,11 @@ def test_load_predictor_stages_only_declared_remote_artifacts(tmp_path, monkeypa
             "owner/model",
             hf_token="token",
             revision=revision,
+            before_model_load=lambda: events.append("before"),
         )
         is predictor
     )
+    assert events == ["marker", "snapshot", "before", "load"]
     assert marker_downloads == [
         {
             "repo_id": "owner/model",

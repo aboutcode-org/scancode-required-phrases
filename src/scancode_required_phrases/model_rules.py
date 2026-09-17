@@ -51,7 +51,7 @@ def _artifact_names(success_marker):
     return names
 
 
-def _load_remote_predictor(repository, revision, hf_token):
+def _load_remote_predictor(repository, revision, hf_token, before_model_load=None):
     """Download only declared model artifacts and load them locally."""
     from huggingface_hub import hf_hub_download
     from huggingface_hub import snapshot_download
@@ -89,20 +89,29 @@ def _load_remote_predictor(repository, revision, hf_token):
                 target.hardlink_to(source)
             except OSError:
                 shutil.copy2(source, target)
+        if before_model_load:
+            before_model_load()
         return RequiredPhrasePredictor.from_model_dir(model_dir)
 
 
-def load_predictor(model, hf_token=None, revision=None):
+def load_predictor(model, hf_token=None, revision=None, before_model_load=None):
     """Load a predictor from a local directory or pinned Hugging Face revision."""
     model_dir = Path(model)
     if model_dir.is_dir():
         if revision:
             raise ValueError("A model revision cannot be used with a local model directory")
+        if before_model_load:
+            before_model_load()
         return RequiredPhrasePredictor.from_model_dir(model_dir)
 
     if not revision or not IMMUTABLE_REVISION.fullmatch(revision):
         raise ValueError("A 40-character model revision is required for a remote model")
-    return _load_remote_predictor(model, revision, hf_token)
+    return _load_remote_predictor(
+        model,
+        revision,
+        hf_token,
+        before_model_load=before_model_load,
+    )
 
 
 def prediction_rule_issue(rule):

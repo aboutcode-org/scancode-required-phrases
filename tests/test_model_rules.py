@@ -282,6 +282,69 @@ def test_select_installed_prediction_rules_reports_unknown_expression(monkeypatc
         model_rules.select_installed_prediction_rules("unknown")
 
 
+def test_candidate_issue_rejects_complete_ignorable_url():
+    phrase = "https spdx org licenses cc by nc sa 2 0 html"
+    rule = make_rule(
+        text="License details https://spdx.org/licenses/CC-BY-NC-SA-2.0.html apply here",
+        ignorable_urls=["https://spdx.org/licenses/CC-BY-NC-SA-2.0.html"],
+    )
+
+    assert model_rules.candidate_issue(rule, phrase) == "rejected"
+
+
+def test_candidate_issue_rejects_partial_ignorable_url_overlap():
+    phrase = "spdx org licenses cc by nc sa 2 0"
+    rule = make_rule(
+        text="License details https://spdx.org/licenses/CC-BY-NC-SA-2.0.html apply here",
+        ignorable_urls=["https://spdx.org/licenses/CC-BY-NC-SA-2.0.html"],
+    )
+    candidate = model_rules.RequiredPhraseRuleCandidate.create(
+        rule.license_expression,
+        phrase,
+    )
+
+    assert candidate.is_good(rule, model_rules.MIN_TOKENS, model_rules.MIN_SINGLE_TOKEN_LEN)
+    assert len(model_rules.find_phrase_spans_in_text(rule.text, phrase)) == 1
+    assert model_rules.candidate_issue(rule, phrase) == "rejected"
+
+
+def test_candidate_issue_rejects_partial_referenced_filename_overlap():
+    phrase = "the LICENSE txt document"
+    rule = make_rule(
+        text="Copyright terms are described in the LICENSE.txt document included here",
+        referenced_filenames=["LICENSE.txt"],
+    )
+    candidate = model_rules.RequiredPhraseRuleCandidate.create(
+        rule.license_expression,
+        phrase,
+    )
+
+    assert candidate.is_good(rule, model_rules.MIN_TOKENS, model_rules.MIN_SINGLE_TOKEN_LEN)
+    assert len(model_rules.find_phrase_spans_in_text(rule.text, phrase)) == 1
+    assert model_rules.candidate_issue(rule, phrase) == "rejected"
+
+
+def test_candidate_issue_accepts_an_insertable_phrase_without_changing_rule():
+    rule = make_rule(
+        text=(
+            "Permission is granted under the MIT License. "
+            "Visit http://ecos.sourceware.org/ecos-license/ and see LICENSE.txt."
+        ),
+        source="original",
+        ignorable_urls=["http://ecos.sourceware.org/ecos-license/"],
+        referenced_filenames=["LICENSE.txt"],
+    )
+    original_text = rule.text
+    original_urls = list(rule.ignorable_urls)
+    original_filenames = list(rule.referenced_filenames)
+
+    assert model_rules.candidate_issue(rule, "MIT License") is None
+    assert rule.text == original_text
+    assert rule.source == "original"
+    assert rule.ignorable_urls == original_urls
+    assert rule.referenced_filenames == original_filenames
+
+
 def test_predict_rule_candidates_returns_validation_issues():
     rule = make_rule(text="MIT License applies here. MIT License applies there.")
     predictor = FakePredictor(["MIT License", "is"])
@@ -294,6 +357,19 @@ def test_predict_rule_candidates_returns_validation_issues():
         ("MIT License", "ambiguous"),
         ("is", "rejected"),
     ]
+
+
+def test_predict_rule_candidates_rejects_an_ignorable_url():
+    phrase = "https spdx org licenses cc by nc sa 2 0 html"
+    rule = make_rule(
+        text="License details https://spdx.org/licenses/CC-BY-NC-SA-2.0.html apply here",
+        ignorable_urls=["https://spdx.org/licenses/CC-BY-NC-SA-2.0.html"],
+    )
+    predictor = FakePredictor([phrase])
+
+    _result, candidates = model_rules.predict_rule_candidates(rule, predictor)
+
+    assert [(prediction.text, issue) for prediction, issue in candidates] == [(phrase, "rejected")]
 
 
 def test_predict_rule_candidates_preserves_truncation():

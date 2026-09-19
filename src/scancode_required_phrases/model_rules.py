@@ -232,6 +232,16 @@ def candidate_issue(rule, phrase):
     if len(spans) != 1:
         return "ambiguous"
 
+    candidate_rule = copy(rule)
+    inserted = add_required_phrase_to_rule(
+        rule=candidate_rule,
+        required_phrase=phrase,
+        source=rule.source or "",
+        dry_run=True,
+    )
+    if not inserted:
+        return "rejected"
+
 
 def predict_rule_candidates(rule, predictor):
     """Return read-only model predictions and their validation issues."""

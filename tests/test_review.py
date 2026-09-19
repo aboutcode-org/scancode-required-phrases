@@ -50,6 +50,7 @@ def make_session(tmp_path, run_mode="interactive", score=0.9):
         run_mode=run_mode,
         rules_scanned=1,
         rules_eligible=1,
+        rules_selected=1,
         truncated_rules=0,
         auto_score=0.8 if run_mode == "batch" else None,
         review_score=0.5 if run_mode == "batch" else None,
@@ -85,6 +86,7 @@ def test_large_session_round_trip(tmp_path):
     metadata["target"] = str(tmp_path.resolve())
     metadata["rules_scanned"] = 500
     metadata["rules_eligible"] = 500
+    metadata["rules_selected"] = 500
     template = records[0]
     records = []
     for index in range(500):
@@ -145,6 +147,47 @@ def test_validate_session_rejects_unknown_fields(tmp_path):
 
     with pytest.raises(ValueError, match="invalid fields"):
         review.validate_session(metadata, records, "session.jsonl")
+
+
+def test_read_session_rejects_previous_format_version(tmp_path):
+    metadata, records, _rule_path = make_session(tmp_path)
+    metadata["format_version"] = 1
+    session_path = tmp_path / "session.jsonl"
+    entries = [metadata, *records]
+    session_path.write_text(
+        "\n".join(json.dumps(entry) for entry in entries) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="unsupported format version 1"):
+        review.read_session(session_path)
+
+
+@pytest.mark.parametrize(
+    "field,value,error",
+    [
+        ("rules_eligible", 2, "eligible rule count exceeds scanned rules"),
+        ("rules_selected", 2, "selected rule count exceeds eligible rules"),
+        ("truncated_rules", 2, "truncated rule count exceeds selected rules"),
+    ],
+)
+def test_validate_session_rejects_inconsistent_rule_counts(tmp_path, field, value, error):
+    metadata, records, _rule_path = make_session(tmp_path)
+    metadata[field] = value
+
+    with pytest.raises(ValueError, match=error):
+        review.validate_session(metadata, records, "session.jsonl")
+
+
+def test_validate_session_rejects_more_rule_records_than_selected(tmp_path):
+    metadata, records, _rule_path = make_session(tmp_path)
+    duplicate = dict(records[0])
+    duplicate["path"] = str((tmp_path / "other.RULE").resolve())
+    duplicate["identifier"] = "other.RULE"
+    duplicate["predictions"] = [dict(records[0]["predictions"][0])]
+
+    with pytest.raises(ValueError, match="rule record count exceeds selected rules"):
+        review.validate_session(metadata, [records[0], duplicate], "session.jsonl")
 
 
 @pytest.mark.parametrize(
@@ -239,6 +282,9 @@ def test_validate_session_rejects_duplicate_paths_and_identifiers(tmp_path):
     metadata, records, _rule_path = make_session(tmp_path)
     duplicate = dict(records[0])
     duplicate["predictions"] = [dict(records[0]["predictions"][0])]
+    metadata["rules_scanned"] = 2
+    metadata["rules_eligible"] = 2
+    metadata["rules_selected"] = 2
 
     with pytest.raises(ValueError, match="duplicate rule path"):
         review.validate_session(metadata, [records[0], duplicate], "session.jsonl")
@@ -430,6 +476,7 @@ def test_prepare_rule_updates_keeps_pending_rule_untouched(tmp_path):
         run_mode="batch",
         rules_scanned=2,
         rules_eligible=2,
+        rules_selected=2,
         truncated_rules=0,
         auto_score=0.8,
         review_score=0.5,
@@ -520,8 +567,9 @@ def test_write_rule_updates_saves_expected_hash_before_writing(tmp_path, monkeyp
         lambda **kwargs: writes.append(kwargs) or records[0]["expected_hash"],
     )
 
-    review.write_rule_updates(session_path, metadata, records, work)
+    written = review.write_rule_updates(session_path, metadata, records, work)
 
+    assert written == ["mit_test.RULE"]
     assert len(writes) == 1
     saved_metadata, saved_records = review.read_session(session_path)
     assert saved_metadata == metadata

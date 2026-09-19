@@ -22,7 +22,7 @@ from scancode_required_phrases.model_rules import serialize_rule
 from scancode_required_phrases.model_rules import write_rule_atomically
 
 
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
 PENDING = "pending"
 APPROVED = "approved"
 REJECTED = "rejected"
@@ -44,6 +44,7 @@ METADATA_FIELDS = {
     "review_score",
     "rules_scanned",
     "rules_eligible",
+    "rules_selected",
     "truncated_rules",
 }
 RULE_FIELDS = {
@@ -89,6 +90,7 @@ def create_metadata(
     run_mode,
     rules_scanned,
     rules_eligible,
+    rules_selected,
     truncated_rules,
     auto_score=None,
     review_score=None,
@@ -106,6 +108,7 @@ def create_metadata(
         "review_score": review_score,
         "rules_scanned": rules_scanned,
         "rules_eligible": rules_eligible,
+        "rules_selected": rules_selected,
         "truncated_rules": truncated_rules,
     }
 
@@ -166,14 +169,21 @@ def _validate_metadata(metadata, session_path):
     if type(target) is not str or not target or not Path(target).is_absolute():
         raise ValueError(f"{location}: target must be an absolute path")
 
-    for field in ("rules_scanned", "rules_eligible", "truncated_rules"):
+    for field in (
+        "rules_scanned",
+        "rules_eligible",
+        "rules_selected",
+        "truncated_rules",
+    ):
         value = metadata[field]
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
             raise ValueError(f"{location}: {field} must be a non-negative integer")
     if metadata["rules_eligible"] > metadata["rules_scanned"]:
         raise ValueError(f"{location}: eligible rule count exceeds scanned rules")
-    if metadata["truncated_rules"] > metadata["rules_eligible"]:
-        raise ValueError(f"{location}: truncated rule count exceeds eligible rules")
+    if metadata["rules_selected"] > metadata["rules_eligible"]:
+        raise ValueError(f"{location}: selected rule count exceeds eligible rules")
+    if metadata["truncated_rules"] > metadata["rules_selected"]:
+        raise ValueError(f"{location}: truncated rule count exceeds selected rules")
 
     auto_score = metadata["auto_score"]
     review_score = metadata["review_score"]
@@ -328,6 +338,9 @@ def validate_session(metadata, records, session_path):
             raise ValueError(f"{session_path} line {line_number}: duplicate rule identifier")
         paths.add(record["path"])
         identifiers.add(record["identifier"])
+
+    if len(records) > metadata["rules_selected"]:
+        raise ValueError(f"{session_path}: rule record count exceeds selected rules")
 
 
 def create_session_path(session_path=None):
@@ -567,7 +580,8 @@ def prepare_rule_updates(metadata, records, loaded_rules):
 
 
 def write_rule_updates(session_path, metadata, records, work):
-    """Write prepared rules and save progress after each successful write."""
+    """Write prepared rules, save progress, and return their identifiers."""
+    written = []
     write_session(session_path, metadata, records)
     for record, rule_path, content in work:
         written_hash = write_rule_atomically(
@@ -577,3 +591,5 @@ def write_rule_updates(session_path, metadata, records, work):
         )
         record["applied_hash"] = written_hash
         write_session(session_path, metadata, records)
+        written.append(record["identifier"])
+    return written

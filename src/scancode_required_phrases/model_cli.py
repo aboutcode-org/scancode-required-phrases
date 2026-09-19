@@ -26,9 +26,15 @@ from scancode_required_phrases.review import create_rule_record
 from scancode_required_phrases.review import create_session_path
 from scancode_required_phrases.review import load_session_rules
 from scancode_required_phrases.review import prepare_rule_updates
+from scancode_required_phrases.review import prediction_needs_review
 from scancode_required_phrases.review import read_session
 from scancode_required_phrases.review import write_rule_updates
 from scancode_required_phrases.review import write_session
+from scancode_required_phrases.review_ui import displayed_expression
+from scancode_required_phrases.review_ui import marked_phrase
+from scancode_required_phrases.review_ui import print_counts
+from scancode_required_phrases.review_ui import print_review_overview
+from scancode_required_phrases.review_ui import print_session_status
 from scancode_required_phrases.review_ui import print_summary
 from scancode_required_phrases.review_ui import resume_command
 from scancode_required_phrases.review_ui import review_predictions
@@ -41,6 +47,10 @@ DEFAULT_MODEL_REVISION = "11215925b0f9b64cfcfbbb5492b52d6aeb5a572b"
 def stdin_is_tty():
     """Return whether interactive input is available."""
     return sys.stdin.isatty()
+
+
+def stdout_is_tty():
+    return click.get_text_stream("stdout").isatty()
 
 
 def validate_options(
@@ -118,27 +128,27 @@ def resolve_model(model, model_revision):
 
 
 def select_targets(rule_path, rules_directory, all_rules, license_expression, limit):
-    """Return target metadata and selected rules for a new run."""
+    """Return target metadata, selected rules, and selection counts."""
     if rule_path:
-        selected = [load_prediction_rule(rule_path, license_expression)]
+        eligible = [load_prediction_rule(rule_path, license_expression)]
         target_mode = "rule"
-        target = selected[0][0]
+        target = eligible[0][0]
         rules_scanned = 1
     elif rules_directory:
         root = Path(rules_directory).resolve(strict=True)
         rules_scanned = len(list(root.glob("*.RULE")))
-        selected = load_prediction_rules(root, license_expression)
+        eligible = load_prediction_rules(root, license_expression)
         target_mode = "rules_dir"
         target = root
     else:
-        selected = select_installed_prediction_rules(license_expression)
-        target_mode = "all"
         target = Path(rules_data_dir).resolve(strict=True)
-        rules_scanned = len(selected)
+        rules_scanned = len(list(target.glob("*.RULE")))
+        eligible = select_installed_prediction_rules(license_expression)
+        target_mode = "all"
 
-    if limit:
-        selected = selected[:limit]
-    return target_mode, target, selected, rules_scanned
+    rules_eligible = len(eligible)
+    selected = eligible[:limit] if limit else eligible
+    return target_mode, target, selected, rules_scanned, rules_eligible
 
 
 def predict_targets(
@@ -209,22 +219,78 @@ def write_json_predictions(rows, json_output):
     output_path.write_text(content + "\n", encoding="utf-8")
 
 
-def print_prediction_rows(rows):
-    """Print concise read-only prediction output."""
-    if not rows:
-        click.echo("No model predictions found")
-        return
+VALIDATION_MESSAGES = {
+    None: "Ready for review",
+    "rejected": "Blocked - does not meet ScanCode required-phrase checks",
+    "not_found": "Blocked - exact phrase was not found in the rule text",
+    "ambiguous": "Blocked - phrase appears more than once",
+}
+
+
+def print_prediction_rows(
+    rows,
+    rules_scanned,
+    rules_eligible,
+    rules_selected,
+    truncated_rules,
+    verbose,
+    color,
+):
+    """Print read-only predictions grouped by rule."""
+    grouped = {}
     for row in rows:
-        status = row["validation_issue"] or "valid"
-        truncated = " truncated" if row["truncated"] else ""
-        click.echo(
-            f"{row['identifier']}  {row['license_expression']}  "
-            f"{row['score']:.1%}  {status}{truncated}"
+        grouped.setdefault(row["path"], []).append(row)
+
+    ready = sum(row["validation_issue"] is None for row in rows)
+    blocked = len(rows) - ready
+    prediction_counts = []
+    if ready:
+        prediction_counts.append(f"{ready} ready")
+    if blocked:
+        prediction_counts.append(f"{blocked} blocked by validation")
+    if not prediction_counts:
+        prediction_counts.append("0")
+
+    items = [
+        ("Selected rules", rules_selected),
+        ("Rules with predictions", len(grouped)),
+        ("Predictions", ", ".join(prediction_counts)),
+    ]
+    if verbose:
+        items.extend(
+            [
+                ("Rules scanned", rules_scanned),
+                ("Rules eligible", rules_eligible),
+                ("Predictions found", len(rows)),
+                ("Truncated rules", truncated_rules),
+            ]
         )
-        click.echo(f"  {row['phrase']}")
+    click.echo("\nPrediction overview\n")
+    print_counts(items)
+    if not rows:
+        click.echo("\nNo model predictions found.")
+        return
+
+    for position, predictions in enumerate(grouped.values(), 1):
+        first = predictions[0]
+        click.echo(f"\nRule {position} of {len(grouped)}\n")
+        click.echo(f"Rule:       {first['identifier']}")
+        if verbose:
+            click.echo(f"Path:       {first['path']}")
+        expression = displayed_expression(first["license_expression"], verbose)
+        click.echo(f"Expression: {expression}")
+        click.echo("\nPredicted required phrases:")
+        for prediction_number, row in enumerate(predictions, 1):
+            phrase = marked_phrase(row["phrase"])
+            phrase = click.style(phrase, fg="green", bold=True) if color else phrase
+            click.echo(f"  {prediction_number}. {phrase}", color=color)
+            click.echo(f"     Model score: {row['score']:.1%}")
+            click.echo(f"     Validation: {VALIDATION_MESSAGES[row['validation_issue']]}")
+            if row["truncated"]:
+                click.echo("     Warning: Rule input was truncated.")
 
 
-def finish_session(session_path, metadata, records, dry_run, allow_write):
+def finish_session(session_path, metadata, records, dry_run, allow_write, verbose):
     """Preflight a complete session and optionally write its rules."""
     loaded_rules, reconciled = load_session_rules(metadata, records)
     if reconciled:
@@ -233,45 +299,47 @@ def finish_session(session_path, metadata, records, dry_run, allow_write):
 
     work, unchanged, deferred = prepare_rule_updates(metadata, records, loaded_rules)
     write_session(session_path, metadata, records)
-    print_summary(metadata, records, unchanged=len(unchanged))
-    if not work:
-        click.echo(f"Session saved: {session_path}")
-        if deferred:
-            click.echo(f"Resume with: {resume_command(session_path)}")
-        return
+    if work:
+        click.echo(f"\nReady rule paths ({len(work)}):")
+        for _record, rule_path, _content in work:
+            click.echo(f"  {rule_path}")
+
+    written = []
+    should_write = False
+    if not dry_run:
+        if allow_write is None and work:
+            noun = "rule" if len(work) == 1 else "rules"
+            should_write = click.confirm(
+                f"\nApply updates to {len(work)} {noun}?",
+                default=False,
+            )
+        elif allow_write:
+            should_write = bool(work)
+
+    if should_write:
+        written = write_rule_updates(session_path, metadata, records, work)
+
+    print_summary(
+        metadata,
+        records,
+        ready=len(work),
+        deferred=len(deferred),
+        unchanged=len(unchanged),
+        written=len(written),
+        verbose=verbose,
+    )
     if dry_run:
-        click.echo("Dry run: no rules were written")
-        click.echo(f"Session saved: {session_path}")
-        if deferred:
-            click.echo(f"Resume with: {resume_command(session_path)}")
-        return
+        click.echo("\nDry run: no rule files were written.")
+    elif metadata["run_mode"] == "batch" and work and allow_write is False:
+        click.echo("\nReady rules were not written because --yes was not provided.")
+    click.echo(f"\nSession: {session_path}")
 
-    if allow_write is None:
-        choice = click.prompt(
-            "[d] dry-run  [a] apply  [s] save and exit",
-            default="s",
-            show_default=False,
-            type=click.Choice(["d", "a", "s"], case_sensitive=False),
-        ).lower()
-        if choice != "a":
-            if choice == "d":
-                click.echo("Dry run: no rules were written")
-            click.echo(f"Session saved: {session_path}")
-            if deferred:
-                click.echo(f"Resume with: {resume_command(session_path)}")
-            return
-    elif not allow_write:
-        click.echo(f"Session saved: {session_path}")
-        if deferred:
-            click.echo(f"Resume with: {resume_command(session_path)}")
-        return
-
-    write_rule_updates(session_path, metadata, records, work)
-    print_summary(metadata, records, unchanged=len(unchanged))
-    if deferred:
-        click.echo(f"Resume with: {resume_command(session_path)}")
-    if metadata["target_mode"] == "all":
-        click.echo("Run scancode-reindex-licenses to use the new required phrases")
+    has_unapplied_work = bool(work and not written)
+    if deferred or has_unapplied_work:
+        click.echo(f"Resume: {resume_command(session_path)}")
+    if metadata["target_mode"] == "all" and written:
+        click.echo("\nNext step:")
+        click.echo("  scancode-reindex-licenses")
 
 
 def run_new(
@@ -298,21 +366,37 @@ def run_new(
         click.get_text_stream("stderr") if json_output == "-" else click.get_text_stream("stdout")
     )
     click.echo("Selecting rules...", file=progress_file)
-    target_mode, target, selected, rules_scanned = select_targets(
+    target_mode, target, selected, rules_scanned, rules_eligible = select_targets(
         rule_path,
         rules_directory,
         all_rules,
         license_expression,
         limit,
     )
+    rules_selected = len(selected)
     if not selected:
         if predict_only and json_output:
             write_json_predictions([], json_output)
-        click.echo("No eligible rules found", err=json_output == "-")
+        else:
+            print_prediction_rows(
+                [],
+                rules_scanned=rules_scanned,
+                rules_eligible=rules_eligible,
+                rules_selected=rules_selected,
+                truncated_rules=0,
+                verbose=verbose,
+                color=color,
+            )
+        click.echo("No eligible rules found.", err=json_output == "-")
         return
 
-    click.echo(f"Selected {len(selected)} eligible rules.", file=progress_file)
-    click.echo("Loading model...", file=progress_file)
+    noun = "rule" if rules_selected == 1 else "rules"
+    click.echo(f"Selected {rules_selected} {noun}.", file=progress_file)
+    click.echo("Checking model files...", file=progress_file)
+
+    def report_model_load():
+        click.echo("Loading model into memory...", file=progress_file)
+
     with warnings.catch_warnings():
         warnings.filterwarnings(
             "ignore",
@@ -324,8 +408,9 @@ def run_new(
             model,
             hf_token=os.environ.get("HF_TOKEN"),
             revision=model_revision,
+            before_model_load=report_model_load,
         )
-    click.echo("Model loaded.", file=progress_file)
+    click.echo("Model ready.", file=progress_file)
     records, rows, truncated_rules = predict_targets(
         selected,
         predictor,
@@ -338,10 +423,26 @@ def run_new(
         if json_output:
             write_json_predictions(rows, json_output)
         else:
-            print_prediction_rows(rows)
+            print_prediction_rows(
+                rows,
+                rules_scanned=rules_scanned,
+                rules_eligible=rules_eligible,
+                rules_selected=rules_selected,
+                truncated_rules=truncated_rules,
+                verbose=verbose,
+                color=color,
+            )
         return
     if not rows:
-        click.echo("No model predictions found")
+        print_prediction_rows(
+            [],
+            rules_scanned=rules_scanned,
+            rules_eligible=rules_eligible,
+            rules_selected=rules_selected,
+            truncated_rules=truncated_rules,
+            verbose=verbose,
+            color=color,
+        )
         return
 
     session_path = create_session_path(session_path)
@@ -352,7 +453,8 @@ def run_new(
         target=target,
         run_mode="batch" if batch else "interactive",
         rules_scanned=rules_scanned,
-        rules_eligible=len(selected),
+        rules_eligible=rules_eligible,
+        rules_selected=rules_selected,
         truncated_rules=truncated_rules,
         auto_score=auto_score,
         review_score=review_score,
@@ -368,12 +470,14 @@ def run_new(
             records,
             dry_run=dry_run,
             allow_write=yes,
+            verbose=verbose,
         )
         return
 
     loaded_rules, reconciled = load_session_rules(metadata, records)
     if reconciled:
         write_session(session_path, metadata, records)
+    print_review_overview(metadata, records, verbose)
     complete = review_predictions(
         session_path,
         metadata,
@@ -383,8 +487,9 @@ def run_new(
         verbose,
     )
     if not complete:
-        print_summary(metadata, records)
-        click.echo(f"Resume with: {resume_command(session_path)}")
+        print_session_status(metadata, records, verbose)
+        click.echo(f"\nSession: {session_path}")
+        click.echo(f"Resume: {resume_command(session_path)}")
         return
     finish_session(
         session_path,
@@ -392,6 +497,7 @@ def run_new(
         records,
         dry_run=dry_run,
         allow_write=None,
+        verbose=verbose,
     )
 
 
@@ -403,6 +509,12 @@ def run_resume(session_path, dry_run, color, verbose):
         click.echo(f"Recovered interrupted writes: {', '.join(reconciled)}")
         write_session(session_path, metadata, records)
 
+    if any(
+        prediction_needs_review(metadata, prediction)
+        for record in records
+        for prediction in record["predictions"]
+    ):
+        print_review_overview(metadata, records, verbose)
     complete = review_predictions(
         session_path,
         metadata,
@@ -412,8 +524,9 @@ def run_resume(session_path, dry_run, color, verbose):
         verbose,
     )
     if not complete:
-        print_summary(metadata, records)
-        click.echo(f"Resume with: {resume_command(session_path)}")
+        print_session_status(metadata, records, verbose)
+        click.echo(f"\nSession: {session_path}")
+        click.echo(f"Resume: {resume_command(session_path)}")
         return
     finish_session(
         session_path,
@@ -421,6 +534,7 @@ def run_resume(session_path, dry_run, color, verbose):
         records,
         dry_run=dry_run,
         allow_write=None,
+        verbose=verbose,
     )
 
 
@@ -429,40 +543,42 @@ def run_resume(session_path, dry_run, color, verbose):
     "--rule",
     "rule_path",
     type=click.Path(path_type=Path),
-    help="Review one .RULE file.",
+    help="Use one .RULE file.",
 )
 @click.option(
     "--rules-dir",
     "rules_directory",
     type=click.Path(path_type=Path),
-    help="Review top-level .RULE files in a directory.",
+    help="Use top-level .RULE files in a directory.",
 )
-@click.option("--all", "all_rules", is_flag=True, help="Review eligible installed rules.")
+@click.option("--all", "all_rules", is_flag=True, help="Use eligible installed rules.")
 @click.option("-l", "--license-expression", help="Only use rules for this expression.")
 @click.option(
     "--limit",
     default=0,
     type=click.IntRange(min=0),
-    help="Stop after this many eligible rules; zero uses all.",
+    help="Limit selected rules; zero selects all.",
 )
-@click.option("--predict-only", is_flag=True, help="Print predictions without decisions or writes.")
-@click.option("--batch", is_flag=True, help="Classify predictions using explicit scores.")
+@click.option(
+    "--predict-only", is_flag=True, help="Print predictions without prompting or writing rules."
+)
+@click.option("--batch", is_flag=True, help="Classify predictions without prompting.")
 @click.option(
     "--resume",
     type=click.Path(path_type=Path),
-    help="Resume an existing review session.",
+    help="Resume saved predictions without loading the model.",
 )
 @click.option("--model", help="Local model or alternate Hugging Face repository.")
 @click.option("--model-revision", help="Full commit hash for a remote model.")
 @click.option(
     "--auto-score",
     type=click.FloatRange(min=0, max=1),
-    help="Batch automatic-approval score.",
+    help="Score at or above which valid batch predictions may be approved.",
 )
 @click.option(
     "--review-score",
     type=click.FloatRange(min=0, max=1),
-    help="Batch pending-review score.",
+    help="Score at or above which lower-scoring batch predictions remain pending.",
 )
 @click.option("--yes", is_flag=True, help="Permit batch writes after preflight.")
 @click.option(
@@ -477,8 +593,7 @@ def run_resume(session_path, dry_run, color, verbose):
     type=click.Path(path_type=str, allow_dash=True),
     help="Write predict-only JSON to a file or '-' for stdout.",
 )
-@click.option("--dry-run", is_flag=True, help="Validate and preview without writing rules.")
-@click.option("--no-color", is_flag=True, help="Disable colored output.")
+@click.option("--dry-run", is_flag=True, help="Prevent every rule-file write.")
 @click.option("-v", "--verbose", is_flag=True, help="Print additional processing details.")
 @click.help_option("-h", "--help")
 def add_model_required_phrases(
@@ -498,13 +613,10 @@ def add_model_required_phrases(
     session_path,
     json_output,
     dry_run,
-    no_color,
     verbose,
 ):
-    """Review and add model-predicted required phrases to license rules."""
-    color = (
-        not no_color and "NO_COLOR" not in os.environ and click.get_text_stream("stdout").isatty()
-    )
+    """Review model-predicted required phrases and optionally add them to rules."""
+    color = "NO_COLOR" not in os.environ and stdout_is_tty()
     try:
         validate_options(
             rule_path,

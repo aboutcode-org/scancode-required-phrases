@@ -87,23 +87,28 @@ pinned public model by default:
     python -m pip install ".[inference]"
     add-model-required-phrases --rule path/to/example.RULE
 
-The default mode shows each phrase, model score, text context, and exact rule
-diff before asking for approval. Decisions are saved in a resumable session.
-Use ``--rules-dir`` for top-level rule files in a directory or ``--all`` for
-eligible installed ScanCode rules.
+Interactive review is the default. It shows each proposed phrase, its model
+score and validation result, nearby context, and the exact rule diff before
+prompting for a decision. Decisions are saved in a resumable session. Use
+``--rules-dir`` for top-level rule files in a directory or ``--all`` for
+eligible installed ScanCode rules. ``--limit`` limits selected rules, not
+predictions.
 
-Read-only prediction never creates a session or changes a rule:
+Read-only prediction groups phrases by rule and never creates a session or
+changes a rule:
 
 .. code-block:: console
 
     add-model-required-phrases --rule path/to/example.RULE --predict-only
 
-A wrong required phrase can cause a false negative. Batch processing therefore
-requires explicit score thresholds and ``--yes`` before any write. Rules with
-pending phrases are deferred unchanged while fully decided rules can be applied.
-``--dry-run`` always writes zero rules. Run ``scancode-reindex-licenses`` after
-changing installed ScanCode rules. Use ``--model`` for a custom local or remote
-model.
+A wrong required phrase can cause a false negative. Batch processing does not
+prompt and requires explicit score thresholds. ``--yes`` permits batch writes.
+Rules with pending phrases are deferred unchanged while fully decided rules can
+be applied. Interactive application uses one final confirmation. ``--dry-run``
+prevents all rule-file writes while retaining the session. Resume uses its saved
+predictions without loading the model. After the command writes installed
+rules, it prints ``scancode-reindex-licenses`` as the next step. Use ``--model``
+for a custom local or remote model.
 
 Development
 ===========

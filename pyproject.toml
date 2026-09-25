@@ -102,7 +102,7 @@ ignore = ["D1", "D200", "D202", "D203", "D205", "D212", "D400", "D415", "I001"]
 force-single-line = true
 lines-after-imports = 1
 default-section = "first-party"
-known-first-party = ["src", "tests", "etc/scripts/**/*.py"]
+known-first-party = ["scancode_required_phrases", "tests", "etc/scripts/**/*.py"]
 known-third-party = ["click", "pytest"]
 
 sections = { django = ["django"] }

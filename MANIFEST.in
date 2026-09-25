@@ -1,5 +1,6 @@
 graft src
 graft docs
+prune docs/_build
 graft etc
 
 include *.LICENSE

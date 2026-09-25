@@ -1,0 +1,4 @@
+# Constraints used by ./configure. Package dependencies live in setup.cfg.
+click >= 8.1, < 9
+license-expression >= 30.4, < 31
+scancode-toolkit >= 32.5, < 33

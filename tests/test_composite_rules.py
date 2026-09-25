@@ -12,10 +12,6 @@ from licensedcode.models import Rule
 from licensedcode.required_phrases import IsRequiredPhrase
 
 from scancode_required_phrases import composite_rules
-from scancode_required_phrases.composite_rules import add_composite_required_phrases
-from scancode_required_phrases.composite_rules import add_required_phrases_to_composite_rules
-from scancode_required_phrases.composite_rules import get_required_phrases_by_key
-from scancode_required_phrases.composite_rules import update_composite_rules_using_required_phrases
 
 
 def make_required_phrase_rule(expression, text, identifier):
@@ -56,7 +52,7 @@ def test_get_required_phrases_by_key_collects_single_key_phrases_longest_first()
         ],
     }
 
-    required_phrases = get_required_phrases_by_key(
+    required_phrases = composite_rules.get_required_phrases_by_key(
         rules_by_expression=rules_by_expression,
         licenses_by_key={"mit": make_license()},
     )
@@ -82,7 +78,7 @@ def test_get_required_phrases_by_key_skips_composite_expressions():
         "apache-2.0": make_license(),
     }
 
-    required_phrases = get_required_phrases_by_key(
+    required_phrases = composite_rules.get_required_phrases_by_key(
         rules_by_expression=rules_by_expression,
         licenses_by_key=licenses_by_key,
     )
@@ -97,7 +93,7 @@ def test_get_required_phrases_by_key_skips_generic_licenses():
         ],
     }
 
-    required_phrases = get_required_phrases_by_key(
+    required_phrases = composite_rules.get_required_phrases_by_key(
         rules_by_expression=rules_by_expression,
         licenses_by_key={"unknown": make_license(is_generic=True)},
     )
@@ -113,7 +109,7 @@ def test_add_required_phrases_marks_every_key(required_phrases_by_key):
         is_license_notice=True,
     )
 
-    add_required_phrases_to_composite_rules(
+    composite_rules.add_required_phrases_to_composite_rules(
         rules=[rule],
         license_keys=["mit", "apache-2.0"],
         required_phrases_by_key=required_phrases_by_key,
@@ -133,7 +129,7 @@ def test_add_required_phrases_requires_every_key(required_phrases_by_key):
         is_license_notice=True,
     )
 
-    add_required_phrases_to_composite_rules(
+    composite_rules.add_required_phrases_to_composite_rules(
         rules=[rule],
         license_keys=["mit", "apache-2.0"],
         required_phrases_by_key=required_phrases_by_key,
@@ -152,7 +148,7 @@ def test_add_required_phrases_marks_three_keys(required_phrases_by_key):
         is_license_notice=True,
     )
 
-    add_required_phrases_to_composite_rules(
+    composite_rules.add_required_phrases_to_composite_rules(
         rules=[rule],
         license_keys=["mit", "apache-2.0", "bsd-new"],
         required_phrases_by_key=required_phrases_by_key,
@@ -172,7 +168,7 @@ def test_add_required_phrases_keeps_existing_markers(required_phrases_by_key):
         is_license_notice=True,
     )
 
-    add_required_phrases_to_composite_rules(
+    composite_rules.add_required_phrases_to_composite_rules(
         rules=[rule],
         license_keys=["mit", "apache-2.0"],
         required_phrases_by_key=required_phrases_by_key,
@@ -196,7 +192,7 @@ def test_add_required_phrases_prefers_an_existing_marker(required_phrases_by_key
         required_phrases_by_key["mit"][0],
     ]
 
-    add_required_phrases_to_composite_rules(
+    composite_rules.add_required_phrases_to_composite_rules(
         rules=[rule],
         license_keys=["mit", "apache-2.0"],
         required_phrases_by_key=required_phrases_by_key,
@@ -223,7 +219,7 @@ def test_add_required_phrases_writes_once(required_phrases_by_key, tmp_path, mon
     monkeypatch.setattr(Rule, "dump", dump)
     monkeypatch.setattr(composite_rules, "rules_data_dir", str(tmp_path))
 
-    add_required_phrases_to_composite_rules(
+    composite_rules.add_required_phrases_to_composite_rules(
         rules=[rule],
         license_keys=["mit", "apache-2.0"],
         required_phrases_by_key=required_phrases_by_key,
@@ -253,7 +249,7 @@ def test_add_required_phrases_dry_run_does_not_write(
 
     monkeypatch.setattr(Rule, "dump", dump)
 
-    add_required_phrases_to_composite_rules(
+    composite_rules.add_required_phrases_to_composite_rules(
         rules=[rule],
         license_keys=["mit", "apache-2.0"],
         required_phrases_by_key=required_phrases_by_key,
@@ -288,7 +284,7 @@ def test_add_required_phrases_rolls_back_a_failed_update(
 
     monkeypatch.setattr(composite_rules, "add_required_phrase_to_rule", add_required_phrase)
 
-    add_required_phrases_to_composite_rules(
+    composite_rules.add_required_phrases_to_composite_rules(
         rules=[rule],
         license_keys=["mit", "apache-2.0"],
         required_phrases_by_key=required_phrases_by_key,
@@ -330,7 +326,7 @@ def test_add_required_phrases_uses_a_non_overlapping_candidate():
         ],
     }
 
-    add_required_phrases_to_composite_rules(
+    composite_rules.add_required_phrases_to_composite_rules(
         rules=[rule],
         license_keys=["gpl-2.0", "gpl-2.0-plus"],
         required_phrases_by_key=required_phrases_by_key,
@@ -358,7 +354,7 @@ def test_add_required_phrases_backtracks_to_an_earlier_key_candidate():
         ],
     }
 
-    add_required_phrases_to_composite_rules(
+    composite_rules.add_required_phrases_to_composite_rules(
         rules=[rule],
         license_keys=["license-a", "license-b"],
         required_phrases_by_key=required_phrases_by_key,
@@ -387,7 +383,7 @@ def test_add_required_phrases_does_not_partially_mark_repeated_overlaps():
         ],
     }
 
-    add_required_phrases_to_composite_rules(
+    composite_rules.add_required_phrases_to_composite_rules(
         rules=[rule],
         license_keys=["license-a", "license-b"],
         required_phrases_by_key=required_phrases_by_key,
@@ -435,7 +431,7 @@ def test_update_composite_rules_uses_single_key_required_phrases(monkeypatch):
         },
     )
 
-    update_composite_rules_using_required_phrases(dry_run=True)
+    composite_rules.update_composite_rules_using_required_phrases(dry_run=True)
 
     assert "{{MIT License}}" in target.text
     assert "{{Apache License}}" in target.text
@@ -473,7 +469,7 @@ def test_update_composite_rules_skips_generic_keys(monkeypatch):
         },
     )
 
-    update_composite_rules_using_required_phrases(dry_run=True)
+    composite_rules.update_composite_rules_using_required_phrases(dry_run=True)
 
     assert "{{MIT License}}" in target.text
     assert "{{Unknown License}}" not in target.text
@@ -495,7 +491,7 @@ def test_composite_command_calls_update_and_validation(monkeypatch):
     )
 
     result = CliRunner().invoke(
-        add_composite_required_phrases,
+        composite_rules.add_composite_required_phrases,
         [
             "--license-expression",
             "mit AND apache-2.0",

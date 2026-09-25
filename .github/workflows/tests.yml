@@ -1,0 +1,59 @@
+name: Tests
+
+on: [push, pull_request]
+
+permissions: {}
+
+jobs:
+  base:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.12", "3.13"]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install development dependencies
+        run: ./configure --dev
+      - name: Run checks
+        run: |
+          venv/bin/ruff check src tests
+          make doc8
+          venv/bin/pytest -q tests/test_dataset.py tests/test_composite_rules.py
+      - name: Build docs and distributions
+        if: matrix.python-version == '3.13'
+        run: |
+          venv/bin/sphinx-build -E -W -b html docs/source docs/_build/
+          venv/bin/python -m build
+          venv/bin/twine check dist/*
+
+  ml:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+      - name: Install ML dependencies
+        run: |
+          ./configure --dev
+          venv/bin/pip install -e ".[training]"
+      - name: Run model tests without downloading or training the public model
+        env:
+          USE_TF: "0"
+        run: |
+          venv/bin/pytest -q \
+            tests/test_training.py \
+            tests/test_model.py \
+            tests/test_export.py \
+            tests/test_inference.py

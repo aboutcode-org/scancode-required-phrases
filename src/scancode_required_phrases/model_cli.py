@@ -660,7 +660,3 @@ def add_model_required_phrases(
             )
     except (InvalidRule, OSError, ValueError) as error:
         raise click.ClickException(str(error)) from error
-
-
-if __name__ == "__main__":
-    add_model_required_phrases()

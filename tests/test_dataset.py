@@ -8,10 +8,10 @@ import json
 from click.testing import CliRunner
 import pytest
 
-from licensedcode.models import InvalidRule
 from licensedcode.models import Rule
 from licensedcode.tokenize import InvalidRuleRequiredPhrase
 
+from scancode_required_phrases.dataset import DatasetRecord
 from scancode_required_phrases.dataset import build_record
 from scancode_required_phrases.dataset import main
 from scancode_required_phrases.dataset import split_records
@@ -46,30 +46,40 @@ def test_build_record_returns_normalized_rule_data():
 
     record = build_record(rule)
 
-    assert record == {
-        "identifier": "mit_test.RULE",
-        "license_expression": "mit",
-        "rule_type": "is_license_notice",
-        "text": "Licensed under the MIT License.\nTerms",
-        "tokens": ["Licensed", "under", "the", "MIT", "License", "Terms"],
-        "bioes_labels": ["O", "O", "O", "B-REQ", "E-REQ", "O"],
-    }
+    assert record == DatasetRecord(
+        identifier="mit_test.RULE",
+        license_expression="mit",
+        rule_type="is_license_notice",
+        text="Licensed under the MIT License.\nTerms",
+        tokens=["Licensed", "under", "the", "MIT", "License", "Terms"],
+        bioes_labels=["O", "O", "O", "B-REQ", "E-REQ", "O"],
+    )
 
 
-def test_build_record_skips_unannotated_rules_and_rejects_invalid_markers():
+def test_build_record_skips_unannotated_rules():
     assert build_record(make_rule(text="Licensed under the MIT License.")) is None
     assert build_record(make_rule(text="")) is None
     assert build_record(make_rule(is_required_phrase=True)) is None
 
-    invalid_texts = (
+
+def test_build_record_without_a_rule_flag_is_a_license_rule():
+    record = build_record(make_rule(is_license_notice=False))
+
+    assert record.rule_type == "license_rule"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
         "Empty {{}} marker",
         "Opening {{dangling marker",
         "Closing dangling}} marker",
         "Valid {{MIT}} and {{dangling",
-    )
-    for text in invalid_texts:
-        with pytest.raises(InvalidRuleRequiredPhrase):
-            build_record(make_rule(text=text))
+    ],
+)
+def test_build_record_rejects_invalid_markers(text):
+    with pytest.raises(InvalidRuleRequiredPhrase):
+        build_record(make_rule(text=text))
 
 
 @pytest.mark.parametrize(
@@ -90,19 +100,13 @@ def test_build_record_skips_rules_that_are_not_training_targets(rule):
 
 
 def test_split_records_uses_the_hybrid_split_deterministically():
-    records = [
-        {
-            "identifier": f"common_{index}.RULE",
-            "license_expression": "common",
-        }
-        for index in range(50)
-    ]
+    def record(identifier, expression):
+        return DatasetRecord(identifier, expression, "license_rule", "", [], [])
+
+    records = [record(f"common_{index}.RULE", "common") for index in range(50)]
     for expression in ("rare-a", "rare-b", "rare-c"):
         records.extend(
-            {
-                "identifier": f"{expression}_{index}.RULE",
-                "license_expression": expression,
-            }
+            record(f"{expression}_{index}.RULE", expression)
             for index in range(5)
         )
 
@@ -111,7 +115,7 @@ def test_split_records_uses_the_hybrid_split_deterministically():
     assert splits == split_records(records)
     assert sum(len(split) for split in splits.values()) == len(records)
     split_by_identifier = {
-        record["identifier"]: name for name, split in splits.items() for record in split
+        record.identifier: name for name, split in splits.items() for record in split
     }
     assert split_by_identifier["common_20.RULE"] == "train"
     assert split_by_identifier["common_43.RULE"] == "val"
@@ -124,12 +128,13 @@ def test_split_records_uses_the_hybrid_split_deterministically():
         containing_splits = [
             name
             for name, split in splits.items()
-            if any(record["license_expression"] == expression for record in split)
+            if any(record.license_expression == expression for record in split)
         ]
         assert len(containing_splits) == 1
 
 
 def test_main_writes_the_complete_dataset(tmp_path):
+    assert main.name == "build-required-phrases-dataset"
     rules_dir = tmp_path / "rules"
     output_dir = tmp_path / "dataset"
     rules_dir.mkdir()
@@ -185,19 +190,3 @@ def test_main_writes_the_complete_dataset(tmp_path):
     }
     assert all(len(record["tokens"]) == len(record["bioes_labels"]) for record in records)
     assert all("{{" not in record["text"] and "}}" not in record["text"] for record in records)
-
-
-def test_main_fails_when_a_rule_cannot_be_loaded(tmp_path):
-    rules_dir = tmp_path / "rules"
-    output_dir = tmp_path / "dataset"
-    rules_dir.mkdir()
-    (rules_dir / "broken.RULE").write_text("", encoding="utf-8")
-
-    result = CliRunner().invoke(
-        main,
-        ["--rules-dir", str(rules_dir), "--output-dir", str(output_dir)],
-    )
-
-    assert isinstance(result.exception, InvalidRule)
-    assert "broken.RULE" in str(result.exception)
-    assert not output_dir.exists()

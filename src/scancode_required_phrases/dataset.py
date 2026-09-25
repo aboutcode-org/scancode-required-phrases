@@ -11,6 +11,8 @@
 """Build a BIOES dataset from required phrases marked in license rules."""
 
 from collections import Counter
+from dataclasses import asdict
+from dataclasses import dataclass
 import hashlib
 import json
 from pathlib import Path
@@ -20,23 +22,32 @@ import click
 
 from licensedcode.models import load_rules
 from licensedcode.models import rules_data_dir as default_rules_data_dir
-from licensedcode.required_phrases import get_required_phrase_verbatim
 from licensedcode.tokenize import get_existing_required_phrase_spans
 from licensedcode.tokenize import required_phrase_splitter
 
 
-def get_rule_type(rule):
-    """Return the first license rule type set on ``rule``."""
-    for flag in rule.license_flag_names:
-        if getattr(rule, flag):
-            return flag
-    if rule.is_false_positive:
-        return "is_false_positive"
-    return "unknown"
+@dataclass
+class DatasetRecord:
+    """One annotated rule, with its labels and text without markers."""
+
+    identifier: str
+    license_expression: str
+    rule_type: str
+    text: str
+    tokens: list[str]
+    bioes_labels: list[str]
 
 
 def tag_tokens(text):
-    """Return rule text tokens and their required phrase BIOES labels."""
+    """
+    Return tokens and BIOES labels from a rule with marked required phrases.
+
+    O is outside a phrase; S is a single-token phrase. B, I and E mark the
+    beginning, inside and end of a multi-token phrase. For example,
+    ``Use {{MIT}} or {{Apache License Version}}`` has tokens
+    ``Use MIT or Apache License Version`` and labels
+    ``O S-REQ O B-REQ I-REQ E-REQ``.
+    """
     tokens = []
     labels = []
     in_phrase = False
@@ -81,20 +92,23 @@ def build_record(rule):
     text = rule.text.replace("\r\n", "\n").replace("\r", "\n")
     text = unicodedata.normalize("NFKC", text)
 
-    # Fail on invalid nested, empty, or dangling required phrase markers.
-    get_existing_required_phrase_spans(text)
-    if not any(get_required_phrase_verbatim(text)):
+    # Validate the markers before extracting labels.
+    if not get_existing_required_phrase_spans(text):
         return
 
     tokens, bioes_labels = tag_tokens(text)
-    return {
-        "identifier": rule.identifier,
-        "license_expression": rule.license_expression or "",
-        "rule_type": get_rule_type(rule),
-        "text": text.replace("{{", "").replace("}}", ""),
-        "tokens": tokens,
-        "bioes_labels": bioes_labels,
-    }
+    rule_type = next(
+        (flag for flag in rule.license_flag_names if getattr(rule, flag)),
+        "license_rule",
+    )
+    return DatasetRecord(
+        identifier=rule.identifier,
+        license_expression=rule.license_expression,
+        rule_type=rule_type,
+        text=text.replace("{{", "").replace("}}", ""),
+        tokens=tokens,
+        bioes_labels=bioes_labels,
+    )
 
 
 def split_records(records, common_expression_threshold=50):
@@ -104,7 +118,7 @@ def split_records(records, common_expression_threshold=50):
     Keep rare license expressions in one split. Distribute records from common
     expressions by identifier so each split represents their varied rule text.
     """
-    expression_counts = Counter(record["license_expression"] for record in records)
+    expression_counts = Counter(record.license_expression for record in records)
     common_expressions = {
         expression
         for expression, count in expression_counts.items()
@@ -134,9 +148,9 @@ def split_records(records, common_expression_threshold=50):
 
     splits = {name: [] for name in targets}
     for record in records:
-        expression = record["license_expression"]
+        expression = record.license_expression
         if expression in common_expressions:
-            identifier = record["identifier"].encode("utf-8")
+            identifier = record.identifier.encode("utf-8")
             bucket = int(hashlib.md5(identifier).hexdigest(), 16) % 100
             if bucket < 80:
                 split = "train"
@@ -152,7 +166,7 @@ def split_records(records, common_expression_threshold=50):
     return splits
 
 
-@click.command()
+@click.command(name="build-required-phrases-dataset")
 @click.option(
     "--rules-dir",
     type=click.Path(exists=True, file_okay=False),
@@ -185,7 +199,7 @@ def main(rules_dir, output_dir):
         split_file = output_path / f"{split_name}.jsonl"
         with split_file.open("w", encoding="utf-8") as output:
             for record in records_in_split:
-                output.write(json.dumps(record, ensure_ascii=False) + "\n")
+                output.write(json.dumps(asdict(record), ensure_ascii=False) + "\n")
 
     click.echo("\ndone")
     click.echo(f"  rules scanned: {len(rule_files)}")
@@ -194,7 +208,3 @@ def main(rules_dir, output_dir):
         f"  train: {len(splits['train'])}  val: {len(splits['val'])}  test: {len(splits['test'])}"
     )
     click.echo(f"  output: {output_path}")
-
-
-if __name__ == "__main__":
-    main()

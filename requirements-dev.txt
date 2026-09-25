@@ -1,0 +1,4 @@
+# Development constraints used by ./configure --dev.
+pytest >= 7, < 10
+ruff >= 0.11, < 1
+Sphinx >= 5, < 9

@@ -8,11 +8,17 @@ tokenization, matching, and validation used by these commands.
 Installation
 ============
 
-Install this package in a Python 3.10 or newer environment:
+From this checkout, create the virtual environment and install the package
+with Python 3.10 or newer:
 
 .. code-block:: console
 
-    python -m pip install .
+    ./configure
+    venv/bin/build-required-phrases-dataset --help
+
+On Windows, use ``configure.bat`` and ``venv\Scripts`` instead. The
+``configure`` scripts install the package using the constraints in
+``requirements.txt``.
 
 Build a dataset
 ===============
@@ -42,10 +48,11 @@ Create a development environment and run the tests:
 
 .. code-block:: console
 
-    configure --dev
-    venv\Scripts\pytest
+    ./configure --dev
+    venv/bin/pytest -q tests/test_dataset.py tests/test_composite_rules.py
 
-On POSIX systems, run ``./configure --dev`` and ``venv/bin/pytest``.
+On Windows, run ``configure.bat --dev`` and ``venv\Scripts\pytest``. This
+installs the development extras with ``requirements-dev.txt`` constraints.
 
 See ``docs/source/dataset.rst`` and ``docs/source/composite_rules.rst`` for
 details.

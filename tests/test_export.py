@@ -464,6 +464,7 @@ def test_onnx_export_validates_shape_and_publishes_transactionally(tmp_path, mon
 
 
 def test_cli_exposes_crf_and_onnx_as_separate_operations(tmp_path, monkeypatch):
+    assert main.name == "export-required-phrase-model"
     model_dir = tmp_path / "final-model"
     model_dir.mkdir()
     calls = []

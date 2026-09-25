@@ -1908,7 +1908,7 @@ def run_training(config):
     }
 
 
-@click.command()
+@click.command(name="train-required-phrase-model")
 @click.option(
     "--data-dir",
     required=True,
@@ -2020,7 +2020,3 @@ def main(
         raise click.ClickException(
             f"{error}; install scancode-required-phrases[training]"
         ) from error
-
-
-if __name__ == "__main__":
-    main()

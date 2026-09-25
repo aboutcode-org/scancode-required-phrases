@@ -550,7 +550,7 @@ def export_onnx_emissions(model_dir, output_dir, opset=14):
     return output_dir / onnx_path.name, output_dir / manifest_path.name
 
 
-@click.command()
+@click.command(name="export-required-phrase-model")
 @click.option(
     "--model-dir",
     required=True,
@@ -582,7 +582,3 @@ def main(model_dir, output_dir, operation, opset):
         raise click.ClickException(str(error)) from error
     for path in paths:
         click.echo(f"wrote {path}")
-
-
-if __name__ == "__main__":
-    main()

@@ -634,6 +634,7 @@ def test_publishability_rejects_missing_marker_and_unrecorded_file(tmp_path):
 
 
 def test_cli_requires_revision_and_describes_isr_as_locatability(tmp_path):
+    assert main.name == "train-required-phrase-model"
     runner = CliRunner()
     result = runner.invoke(main, ["--data-dir", str(tmp_path), "--with-isr"])
     assert result.exit_code == 2

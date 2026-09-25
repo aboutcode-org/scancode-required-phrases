@@ -276,7 +276,3 @@ def add_composite_required_phrases(
         reindex=reindex,
         verbose=verbose,
     )
-
-
-if __name__ == "__main__":
-    add_composite_required_phrases()

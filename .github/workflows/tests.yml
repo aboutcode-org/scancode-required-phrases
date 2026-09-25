@@ -48,7 +48,7 @@ jobs:
         run: |
           ./configure --dev
           venv/bin/pip install -e ".[training]"
-      - name: Run model tests without downloading or training the public model
+      - name: Run ML and integration tests
         env:
           USE_TF: "0"
         run: |
@@ -56,4 +56,5 @@ jobs:
             tests/test_training.py \
             tests/test_model.py \
             tests/test_export.py \
-            tests/test_inference.py
+            tests/test_inference.py \
+            tests/test_model_rules.py

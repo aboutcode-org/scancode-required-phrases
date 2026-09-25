@@ -60,8 +60,12 @@ reload and validation succeed. See ``docs/source/training.rst`` for details.
 Run read-only prediction
 ========================
 
-Load a validated final model and return candidate required phrases without
-changing a ScanCode rule or file:
+Install the inference dependencies, then load a validated final model and
+return candidate required phrases without changing a ScanCode rule or file:
+
+.. code-block:: console
+
+    python -m pip install ".[inference]"
 
 .. code-block:: python
 
@@ -71,6 +75,15 @@ changing a ScanCode rule or file:
     result = predictor.predict("Permission is hereby granted ...")
 
 Predictions require human review before they are added to license rules.
+
+Prepare predicted phrases for review
+====================================
+
+The ``model_rules`` module loads eligible rules, validates model predictions,
+and prepares complete rule updates without changing the original rules. It also
+provides an atomic writer that requires the exact rule path and its current file
+hash. User-facing review and application are added by the stacked review
+workflow.
 
 Development
 ===========
